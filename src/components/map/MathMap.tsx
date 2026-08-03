@@ -2,10 +2,13 @@
 
 import { useEffect, useRef } from "react";
 import Sigma from "sigma";
+import type { Settings } from "sigma/settings";
+import type { NodeDisplayData, PartialButFor } from "sigma/types";
+import EdgeCurveProgram, { EdgeCurvedArrowProgram } from "@sigma/edge-curve";
 import type Graph from "graphology";
 import type { NodeIndex } from "./graphStore";
 import { baseColor } from "./graphStore";
-import { layoutBranches, layoutChildren } from "./layout";
+import { computeLayout, computeLevels, RADII } from "./layout";
 
 export interface FocusRequest {
   id: string;
@@ -25,7 +28,123 @@ interface Props {
   overlayColors: Map<string, string> | null;
 }
 
-const ZOOM_SPAN: Record<number, number> = { 0: 2400, 1: 1400, 2: 420, 3: 130, 4: 45 };
+/** camera span (graph units) when focusing a node of the given depth */
+const ZOOM_SPAN: Record<number, number> = { 0: 1800, 1: 1250, 2: 950, 3: 700, 4: 450 };
+const DIM_COLOR = "rgba(51,65,85,0.35)";
+const ANIM_MS = 500;
+/** bubbles at least this big get their label drawn inside the circle */
+const INSIDE_LABEL_SIZE = 13;
+
+type LabelData = PartialButFor<NodeDisplayData, "x" | "y" | "size" | "label" | "color">;
+
+/** Word-wrap `text` to fit `maxWidth`, at most `maxLines` lines. */
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines: number,
+): string[] {
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (ctx.measureText(candidate).width <= maxWidth || !line) {
+      line = candidate;
+    } else {
+      lines.push(line);
+      line = word;
+      if (lines.length === maxLines - 1) break;
+    }
+  }
+  if (line && lines.length < maxLines) lines.push(line);
+  const rest = words.slice(lines.join(" ").split(/\s+/).length).length;
+  if (rest > 0 && lines.length > 0) {
+    let last = lines[lines.length - 1];
+    while (ctx.measureText(`${last}…`).width > maxWidth && last.length > 3) {
+      last = last.slice(0, -1);
+    }
+    lines[lines.length - 1] = `${last}…`;
+  }
+  return lines;
+}
+
+/** Draw the label inside big bubbles, beside small dots. */
+function drawNodeLabel(
+  ctx: CanvasRenderingContext2D,
+  data: LabelData,
+  settings: Settings,
+): void {
+  if (!data.label) return;
+  if (data.size >= INSIDE_LABEL_SIZE) {
+    const maxWidth = data.size * 1.75;
+    let fontSize = Math.max(9, Math.min(16, data.size / 2.4));
+    ctx.font = `600 ${fontSize}px ${settings.labelFont}`;
+    let lines = wrapText(ctx, data.label, maxWidth, 3);
+    // long single words can overflow the bubble — shrink the font to fit
+    const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+    if (widest > maxWidth) {
+      fontSize = Math.max(7, fontSize * (maxWidth / widest));
+      ctx.font = `600 ${fontSize}px ${settings.labelFont}`;
+      lines = wrapText(ctx, data.label, maxWidth, 3);
+    }
+    const lineHeight = fontSize + 2;
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    lines.forEach((line, i) => {
+      const y = data.y + (i - (lines.length - 1) / 2) * lineHeight + fontSize * 0.35;
+      ctx.fillText(line, data.x, y);
+    });
+    ctx.textAlign = "left";
+  } else {
+    ctx.font = `${settings.labelWeight} ${settings.labelSize}px ${settings.labelFont}`;
+    ctx.fillStyle = "#cbd5e1";
+    ctx.fillText(data.label, data.x + data.size + 4, data.y + settings.labelSize / 3);
+  }
+}
+
+/** Hover: same inside-label for bubbles; dark pill beside small dots. */
+function drawNodeHover(
+  ctx: CanvasRenderingContext2D,
+  data: LabelData,
+  settings: Settings,
+): void {
+  if (!data.label) return;
+  if (data.size >= INSIDE_LABEL_SIZE) {
+    drawNodeLabel(ctx, data, settings);
+    return;
+  }
+  const size = settings.labelSize;
+  ctx.font = `${settings.labelWeight} ${size}px ${settings.labelFont}`;
+  const w = ctx.measureText(data.label).width;
+  const x = data.x + data.size + 4;
+  const y = data.y;
+  ctx.fillStyle = "rgba(15,23,42,0.92)";
+  ctx.beginPath();
+  ctx.roundRect(x - 5, y - size / 2 - 5, w + 10, size + 10, 6);
+  ctx.fill();
+  ctx.fillStyle = "#f1f5f9";
+  ctx.fillText(data.label, x, y + size / 3);
+}
+
+/** Full up+down closure of a node in the depends-on DAG. */
+function dependencyChain(index: NodeIndex, id: string): Set<string> {
+  const chain = new Set<string>();
+  const walk = (start: string, dir: "depsOf" | "dependentsOf") => {
+    const stack = [start];
+    while (stack.length > 0 && chain.size < 500) {
+      const cur = stack.pop()!;
+      for (const next of index[dir].get(cur) ?? []) {
+        if (chain.has(next) || next === id) continue;
+        chain.add(next);
+        stack.push(next);
+      }
+    }
+  };
+  walk(id, "depsOf");
+  walk(id, "dependentsOf");
+  return chain;
+}
 
 export default function MathMap({
   graph,
@@ -38,21 +157,25 @@ export default function MathMap({
   overlayColors,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const ringsRef = useRef<HTMLCanvasElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
-  const laidOutRef = useRef<Set<string>>(new Set());
   const onSelectRef = useRef(onSelect);
   const onToggleRef = useRef(onToggleExpand);
   onSelectRef.current = onSelect;
   onToggleRef.current = onToggleExpand;
 
+  /** latest layout targets (also used for camera focus) */
+  const targetsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const levelsRef = useRef<Map<string, number> | null>(null);
+  const prevVisibleRef = useRef<Set<string>>(new Set());
+  const animRef = useRef<number | null>(null);
+  /** hover state read by the reducers */
+  const hoverRef = useRef<string | null>(null);
+  const hoverChainRef = useRef<Set<string>>(new Set());
+
   // ---- init sigma ------------------------------------------------------------
   useEffect(() => {
     if (!containerRef.current) return;
-    const branches = [...index.byId.values()]
-      .filter((n) => n.depth === 0)
-      .map((n) => n.id);
-    layoutBranches(graph, branches);
-    laidOutRef.current = new Set(["__branches__"]);
 
     const sigma = new Sigma(graph, containerRef.current, {
       allowInvalidContainer: true,
@@ -61,13 +184,58 @@ export default function MathMap({
       labelSize: 12,
       labelWeight: "500",
       labelFont: "Inter, ui-sans-serif, system-ui",
-      labelRenderedSizeThreshold: 7,
+      labelRenderedSizeThreshold: 5,
+      labelDensity: 0.8,
+      labelGridCellSize: 80,
       minCameraRatio: 0.001,
-      maxCameraRatio: 1.5,
+      maxCameraRatio: 1.4,
       stagePadding: 40,
+      zIndex: true,
       defaultEdgeColor: "rgba(100,116,139,0.3)",
+      defaultDrawNodeLabel: drawNodeLabel,
+      defaultDrawNodeHover: drawNodeHover,
+      edgeProgramClasses: {
+        curved: EdgeCurveProgram,
+        curvedArrow: EdgeCurvedArrowProgram,
+      },
+      nodeReducer: (node, data) => {
+        const hover = hoverRef.current;
+        if (!hover) return data;
+        const res = { ...data };
+        if (node === hover) {
+          res.highlighted = true;
+          res.zIndex = 3;
+        } else if (hoverChainRef.current.has(node)) {
+          res.zIndex = 2;
+          res.forceLabel = true;
+        } else {
+          res.color = DIM_COLOR;
+          res.label = "";
+          res.zIndex = 0;
+        }
+        return res;
+      },
+      edgeReducer: (edge, data) => {
+        const hover = hoverRef.current;
+        if (!hover) return data;
+        const res = { ...data };
+        const [s, t] = graph.extremities(edge);
+        const inChain = (n: string) => n === hover || hoverChainRef.current.has(n);
+        if (inChain(s) && inChain(t)) {
+          if (graph.getEdgeAttribute(edge, "edgeKind") === "depends-on") {
+            res.color = "rgba(251,146,60,0.95)";
+            res.size = 2.2;
+          }
+          res.zIndex = 2;
+        } else {
+          res.hidden = true;
+        }
+        return res;
+      },
     });
-    sigma.setCustomBBox({ x: [-1000, 1000], y: [-1000, 1000] });
+    sigma.setCustomBBox({ x: [-RADII.max, RADII.max], y: [-RADII.max, RADII.max] });
+    // start focused on the branch ring rather than the whole empty canvas
+    sigma.getCamera().setState({ ratio: 0.38 });
 
     sigma.on("clickNode", ({ node }) => {
       onSelectRef.current(node);
@@ -75,15 +243,69 @@ export default function MathMap({
       if (childCount > 0) onToggleRef.current(node);
     });
     sigma.on("clickStage", () => onSelectRef.current(null));
-    sigma.on("enterNode", () => {
+    sigma.on("enterNode", ({ node }) => {
       containerRef.current!.style.cursor = "pointer";
+      const chain = dependencyChain(index, node);
+      if (chain.size > 0) {
+        const n = index.byId.get(node);
+        if (n?.parentId) chain.add(n.parentId);
+        hoverRef.current = node;
+        hoverChainRef.current = chain;
+        sigma.refresh({ skipIndexation: true });
+      }
     });
     sigma.on("leaveNode", () => {
       containerRef.current!.style.cursor = "default";
+      if (hoverRef.current) {
+        hoverRef.current = null;
+        hoverChainRef.current = new Set();
+        sigma.refresh({ skipIndexation: true });
+      }
     });
+
+    // ---- concentric ring guides ------------------------------------------------
+    const drawRings = () => {
+      const canvas = ringsRef.current;
+      const container = containerRef.current;
+      if (!canvas || !container) return;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      const dpr = window.devicePixelRatio || 1;
+      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+      }
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const c = sigma.graphToViewport({ x: 0, y: 0 });
+      const p = sigma.graphToViewport({ x: 100, y: 0 });
+      const scale = Math.hypot(p.x - c.x, p.y - c.y) / 100;
+
+      // warm glow at the center — the direction axioms and foundations point
+      const glowR = Math.max(1, RADII.ring * 0.75 * scale);
+      const grad = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, glowR);
+      grad.addColorStop(0, "rgba(251,191,36,0.07)");
+      grad.addColorStop(1, "rgba(251,191,36,0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, glowR, 0, 2 * Math.PI);
+      ctx.fill();
+
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(148,163,184,0.05)";
+      for (const r of [RADII.ring, ...RADII.childRing]) {
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, r * scale, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    };
+    sigma.on("afterRender", drawRings);
 
     sigmaRef.current = sigma;
     return () => {
+      if (animRef.current) cancelAnimationFrame(animRef.current);
       sigma.kill();
       sigmaRef.current = null;
     };
@@ -91,28 +313,66 @@ export default function MathMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, index]);
 
-  // ---- visibility + layout on expansion change --------------------------------
+  // ---- layout + visibility + movement animation --------------------------------
   useEffect(() => {
     const sigma = sigmaRef.current;
     if (!sigma) return;
+    if (!levelsRef.current) levelsRef.current = computeLevels(index);
+    const levels = levelsRef.current;
 
-    // Lay out children of any expanded node that hasn't been laid out yet,
-    // walking top-down so parents always have positions first.
-    const layoutIfNeeded = (id: string) => {
-      if (laidOutRef.current.has(id)) return;
-      layoutChildren(graph, index, id);
-      laidOutRef.current.add(id);
-    };
-
+    // visible = expansion walk + the selected node's derivation chain
     const visible = new Set<string>();
     const walk = (id: string) => {
       visible.add(id);
       if (!expanded.has(id)) return;
-      layoutIfNeeded(id);
       for (const kid of index.children.get(id) ?? []) walk(kid);
     };
-    for (const n of index.byId.values()) {
-      if (n.depth === 0) walk(n.id);
+    for (const n of index.byId.values()) if (n.depth === 0) walk(n.id);
+
+    const chain = new Set<string>();
+    if (selectedId && index.byId.has(selectedId)) {
+      visible.add(selectedId);
+      for (const id of dependencyChain(index, selectedId)) {
+        chain.add(id);
+        visible.add(id);
+      }
+    }
+
+    const targets = computeLayout(index, expanded, chain, levels);
+    targetsRef.current = targets;
+
+    // animate: existing nodes glide to new spots, newcomers grow out of parent
+    const anims: {
+      id: string;
+      x0: number;
+      y0: number;
+      s0: number;
+      x1: number;
+      y1: number;
+      s1: number;
+    }[] = [];
+    const finalSize = (id: string) =>
+      (graph.getNodeAttribute(id, "size") as number) || 4;
+
+    for (const id of visible) {
+      const t = targets.get(id);
+      if (!t) continue;
+      const wasVisible = prevVisibleRef.current.has(id);
+      const s1 = finalSize(id);
+      if (wasVisible) {
+        const x0 = graph.getNodeAttribute(id, "x") as number;
+        const y0 = graph.getNodeAttribute(id, "y") as number;
+        if (Math.abs(x0 - t.x) > 0.5 || Math.abs(y0 - t.y) > 0.5) {
+          anims.push({ id, x0, y0, s0: s1, x1: t.x, y1: t.y, s1 });
+        }
+      } else {
+        const parentId = index.byId.get(id)?.parentId;
+        const pt = parentId ? targets.get(parentId) : undefined;
+        const x0 = pt ? pt.x : t.x * 0.3;
+        const y0 = pt ? pt.y : t.y * 0.3;
+        graph.mergeNodeAttributes(id, { x: x0, y: y0 });
+        anims.push({ id, x0, y0, s0: s1 * 0.2, x1: t.x, y1: t.y, s1 });
+      }
     }
 
     graph.forEachNode((id) => {
@@ -125,15 +385,44 @@ export default function MathMap({
         !visible.has(source) || !visible.has(target),
       );
     });
-    sigma.refresh();
-  }, [expanded, graph, index]);
+    prevVisibleRef.current = visible;
+
+    if (animRef.current) cancelAnimationFrame(animRef.current);
+    if (anims.length > 0 && anims.length <= 2500) {
+      const start = performance.now();
+      const tick = (now: number) => {
+        const t = Math.min(1, (now - start) / ANIM_MS);
+        const ease = 1 - Math.pow(1 - t, 3);
+        for (const a of anims) {
+          graph.mergeNodeAttributes(a.id, {
+            x: a.x0 + (a.x1 - a.x0) * ease,
+            y: a.y0 + (a.y1 - a.y0) * ease,
+            size: a.s0 + (a.s1 - a.s0) * ease,
+          });
+        }
+        sigma.refresh({ skipIndexation: true });
+        if (t < 1) animRef.current = requestAnimationFrame(tick);
+        else animRef.current = null;
+      };
+      animRef.current = requestAnimationFrame(tick);
+    } else {
+      for (const [id, t] of targets) {
+        if (visible.has(id)) graph.mergeNodeAttributes(id, { x: t.x, y: t.y });
+      }
+      sigma.refresh();
+    }
+  }, [expanded, selectedId, graph, index]);
 
   // ---- selection highlight ------------------------------------------------------
   useEffect(() => {
-    graph.forEachNode((id) => {
+    graph.forEachNode((id, attrs) => {
       graph.setNodeAttribute(id, "highlighted", id === selectedId);
+      const taxonomyForce = ["branch", "field", "subfield"].includes(
+        attrs.nodeType as string,
+      );
+      graph.setNodeAttribute(id, "forceLabel", taxonomyForce || id === selectedId);
     });
-    sigmaRef.current?.refresh();
+    sigmaRef.current?.refresh({ skipIndexation: true });
   }, [selectedId, graph]);
 
   // ---- overlay colors -------------------------------------------------------------
@@ -144,7 +433,7 @@ export default function MathMap({
         : baseColor(id, index);
       graph.setNodeAttribute(id, "color", color);
     });
-    sigmaRef.current?.refresh();
+    sigmaRef.current?.refresh({ skipIndexation: true });
   }, [overlayColors, graph, index]);
 
   // ---- camera focus ------------------------------------------------------------
@@ -153,19 +442,47 @@ export default function MathMap({
     if (!sigma || !focus) return;
     const { id } = focus;
     if (!graph.hasNode(id)) return;
-    // wait a tick so layout/visibility updates land first
+    // wait a tick so the layout effect lands first
     const t = setTimeout(() => {
-      const display = sigma.getNodeDisplayData(id);
-      if (!display) return;
+      const target = targetsRef.current.get(id);
+      if (!target) return;
       const depth = graph.getNodeAttribute(id, "depth") as number;
-      const span = ZOOM_SPAN[Math.min(depth + 1, 4)] ?? 200;
+      // when expanding, frame the node together with its children ring: aim
+      // the camera a bit beyond the node, along its angle
+      const isExpanded = expanded.has(id);
+      if (depth === 0 && !isExpanded) {
+        // collapsed branch (home): frame the whole ring
+        const framed = sigma.viewportToFramedGraph(sigma.graphToViewport({ x: 0, y: 0 }));
+        sigma.getCamera().animate({ x: framed.x, y: framed.y, ratio: 0.38 }, { duration: 500 });
+        return;
+      }
+      const childRing = RADII.childRing[Math.min(depth, RADII.childRing.length - 1)];
+      let cx = target.x;
+      let cy = target.y;
+      if (isExpanded) {
+        const angle = Math.atan2(target.y, target.x);
+        const midR = (Math.hypot(target.x, target.y) + childRing) / 2;
+        cx = midR * Math.cos(angle);
+        cy = midR * Math.sin(angle);
+      }
+      const span = ZOOM_SPAN[Math.min(isExpanded ? depth + 1 : depth + 2, 4)] ?? 450;
+      // the detail panel covers the right ~35% of the screen; nudge the camera
+      // right so the focused content lands in the uncovered area
+      if (selectedId) cx += span * 0.18;
+      const framed = sigma.viewportToFramedGraph(sigma.graphToViewport({ x: cx, y: cy }));
       sigma.getCamera().animate(
-        { x: display.x, y: display.y, ratio: span / 2000 },
-        { duration: 450 },
+        { x: framed.x, y: framed.y, ratio: span / (2 * RADII.max) },
+        { duration: 500 },
       );
     }, 30);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, graph]);
 
-  return <div ref={containerRef} className="absolute inset-0" />;
+  return (
+    <div className="absolute inset-0">
+      <canvas ref={ringsRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+      <div ref={containerRef} className="absolute inset-0" />
+    </div>
+  );
 }

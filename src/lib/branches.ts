@@ -1,6 +1,10 @@
 /**
- * Curated top-level grouping of the 63 MSC 2020 top-level fields into
- * ~9 "grand branches" so the landing view isn't 63 siblings.
+ * Curated top-level grouping of the MSC 2020 top-level fields into
+ * 8 "grand branches" so the landing view isn't 63 siblings.
+ *
+ * Physics (70-86) and computer science (68, 94) MSC sections are deliberately
+ * excluded: they are planned as future additions and must not appear on the
+ * mathematics map.
  */
 export interface GrandBranch {
   id: string; // node id, e.g. "branch:algebra"
@@ -63,12 +67,12 @@ export const GRAND_BRANCHES: GrandBranch[] = [
     color: "#10b981",
   },
   {
-    id: "branch:discrete-cs",
-    slug: "discrete-cs",
-    title: "Discrete Math & Computer Science",
+    id: "branch:discrete",
+    slug: "discrete",
+    title: "Discrete Mathematics",
     summary:
-      "Combinatorics, graph theory, algorithms, complexity, and information theory — the mathematics of finite structures and computation.",
-    mscPrefixes: ["05", "68", "94"],
+      "Combinatorics, graph theory, and design theory — the mathematics of finite structures and counting.",
+    mscPrefixes: ["05"],
     color: "#06b6d4",
   },
   {
@@ -88,15 +92,6 @@ export const GRAND_BRANCHES: GrandBranch[] = [
       "Mathematics in action: numerical analysis, optimization, operations research, mathematical economics, biology, and control theory.",
     mscPrefixes: ["65", "90", "91", "92", "93"],
     color: "#84cc16",
-  },
-  {
-    id: "branch:physics",
-    slug: "physics",
-    title: "Physics & Mechanics",
-    summary:
-      "Mathematical physics: mechanics of particles, solids and fluids, thermodynamics, quantum theory, relativity, astronomy, and geophysics.",
-    mscPrefixes: ["70", "74", "76", "78", "80", "81", "82", "83", "85", "86"],
-    color: "#f97316",
   },
 ];
 

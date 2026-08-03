@@ -56,13 +56,24 @@ export async function GET(
     let relation: string;
     if (e.type === "child-of") {
       relation = e.source === id ? "parent" : "child";
+    } else if (e.type === "depends-on") {
+      // source depends on target: from this node's perspective the other end
+      // is either a prerequisite ("builds on") or a dependent ("leads to").
+      relation = e.source === id ? "builds-on" : "leads-to";
     } else {
       relation = e.type;
     }
     connections.push({ id: other.id, title: other.title, type: other.type, relation });
   }
-  // parents/children first, then cross-references
-  const order: Record<string, number> = { parent: 0, child: 1, "see-also": 2, related: 3 };
+  // derivation links first, then hierarchy, then cross-references
+  const order: Record<string, number> = {
+    "builds-on": 0,
+    "leads-to": 1,
+    parent: 2,
+    child: 3,
+    "see-also": 4,
+    related: 5,
+  };
   connections.sort((a, b) => (order[a.relation] ?? 9) - (order[b.relation] ?? 9));
 
   const detail: NodeDetail = {

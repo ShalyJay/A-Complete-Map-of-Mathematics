@@ -15,6 +15,8 @@ const TYPE_STYLES: Record<string, string> = {
 };
 
 const RELATION_LABELS: Record<string, string> = {
+  "builds-on": "Builds on",
+  "leads-to": "Leads to",
   parent: "Part of",
   child: "Contains",
   "see-also": "See also",

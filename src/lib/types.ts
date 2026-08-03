@@ -12,7 +12,11 @@ export interface GraphNodeLite {
 export interface GraphEdgeLite {
   source: string;
   target: string;
-  type: string; // see-also | related (child-of is derived from parentId)
+  /**
+   * see-also | related | depends-on (child-of is derived from parentId).
+   * For depends-on, source is the dependent result and target its prerequisite.
+   */
+  type: string;
 }
 
 export interface GraphPayload {

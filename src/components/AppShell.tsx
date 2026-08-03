@@ -82,12 +82,13 @@ export default function AppShell() {
   }, [overlay, index, states, docNodes]);
 
   // ---- navigation ------------------------------------------------------------------
+  // Accordion expansion: only one chain is open at a time, so the selected
+  // section gets the whole free space around the ring to spread out into.
   const navigateTo = useCallback(
     (id: string) => {
       if (!index) return;
-      setExpanded((prev) => {
-        const next = new Set(prev);
-        for (const a of index.ancestorsOf(id)) next.add(a);
+      setExpanded(() => {
+        const next = new Set(index.ancestorsOf(id));
         const node = index.byId.get(id);
         if (node && node.childCount > 0) next.add(id);
         return next;
@@ -98,18 +99,18 @@ export default function AppShell() {
     [index],
   );
 
-  const toggleExpand = useCallback((id: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-    setFocus({ id, nonce: ++nonce.current });
-  }, []);
+  const toggleExpand = useCallback(
+    (id: string) => {
+      if (!index) return;
+      setExpanded((prev) => {
+        const next = new Set(index.ancestorsOf(id));
+        if (!prev.has(id)) next.add(id); // collapse if it was open, else open it
+        return next;
+      });
+      setFocus({ id, nonce: ++nonce.current });
+    },
+    [index],
+  );
 
   const goHome = useCallback(() => {
     setExpanded(new Set());
@@ -247,20 +248,32 @@ export default function AppShell() {
       {/* legend */}
       <div className="panel pointer-events-auto absolute bottom-4 left-4 z-10 rounded-xl p-3">
         {overlay === "none" ? (
-          <div className="grid grid-cols-3 gap-x-4 gap-y-1.5">
-            {GRAND_BRANCHES.map((b) => (
-              <button
-                key={b.id}
-                onClick={() => navigateTo(b.id)}
-                className="flex items-center gap-1.5 text-left text-xs text-slate-300 hover:text-white"
-              >
-                <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ background: b.color }}
-                />
-                {b.title}
-              </button>
-            ))}
+          <div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              {GRAND_BRANCHES.map((b) => (
+                <button
+                  key={b.id}
+                  onClick={() => navigateTo(b.id)}
+                  className="flex items-center gap-1.5 text-left text-xs text-slate-300 hover:text-white"
+                >
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ background: b.color }}
+                  />
+                  {b.title}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 flex items-center gap-3 border-t border-slate-700/40 pt-2 text-[11px] text-slate-400">
+              <span className="flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-200" />
+                Axioms (inner arc)
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-0.5 w-4 rounded bg-orange-400" />
+                builds on
+              </span>
+            </div>
           </div>
         ) : overlay === "mastery" ? (
           <div className="flex items-center gap-3 text-xs text-slate-300">
@@ -291,7 +304,7 @@ export default function AppShell() {
 
       {/* hint */}
       <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 text-xs text-slate-500">
-        Click a node to explore · scroll to zoom · drag to pan
+        Click a node to explore · hover a theorem to trace its derivation · scroll to zoom
       </div>
 
       {/* right side: detail panel or documents panel */}

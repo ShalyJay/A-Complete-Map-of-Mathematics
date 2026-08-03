@@ -3,7 +3,11 @@ import { desc, eq, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db";
 import { getUserId } from "@/lib/supabase/server";
-import { classifyDocument, storeClassifications } from "@/lib/analysis";
+import {
+  classifyByKeywords,
+  classifyDocument,
+  storeClassifications,
+} from "@/lib/analysis";
 import type { DocumentLite } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -36,13 +40,18 @@ export async function GET() {
     status: r.status,
     createdAt: r.createdAt.toISOString(),
   }));
-  return NextResponse.json({ documents });
+  return NextResponse.json({
+    documents,
+    llmConfigured: !!process.env.ANTHROPIC_API_KEY,
+  });
 }
 
 const metaSchema = z.object({
   title: z.string().min(1).max(300),
   kind: z.enum(["paper", "course", "exam", "other"]),
   text: z.string().max(200_000).optional(),
+  method: z.enum(["keyword", "llm"]).default("keyword"),
+  apiKey: z.string().max(300).optional(),
 });
 
 async function extractPdfText(buf: ArrayBuffer): Promise<string> {
@@ -58,6 +67,8 @@ export async function POST(req: Request) {
   const contentType = req.headers.get("content-type") ?? "";
   let title: string;
   let kind: "paper" | "course" | "exam" | "other";
+  let method: "keyword" | "llm";
+  let apiKey: string | undefined;
   let text: string;
   let storagePath: string | null = null;
 
@@ -67,12 +78,16 @@ export async function POST(req: Request) {
       title: form.get("title"),
       kind: form.get("kind"),
       text: form.get("text") || undefined,
+      method: form.get("method") || undefined,
+      apiKey: form.get("apiKey") || undefined,
     });
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid form" }, { status: 400 });
     }
     title = parsed.data.title;
     kind = parsed.data.kind;
+    method = parsed.data.method;
+    apiKey = parsed.data.apiKey;
     const file = form.get("file");
     if (file instanceof File && file.size > 0) {
       if (file.size > 15 * 1024 * 1024) {
@@ -104,6 +119,8 @@ export async function POST(req: Request) {
     }
     title = parsed.data.title;
     kind = parsed.data.kind;
+    method = parsed.data.method;
+    apiKey = parsed.data.apiKey;
     text = parsed.data.text;
   }
 
@@ -128,7 +145,10 @@ export async function POST(req: Request) {
     .returning({ id: schema.documents.id });
 
   try {
-    const classifications = await classifyDocument(text, kind, title);
+    const classifications =
+      method === "llm"
+        ? await classifyDocument(text, kind, title, apiKey)
+        : await classifyByKeywords(text);
     const n = await storeClassifications(doc.id, classifications);
     await db
       .update(schema.documents)

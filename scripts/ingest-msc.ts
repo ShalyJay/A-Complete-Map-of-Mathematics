@@ -36,7 +36,9 @@ interface RawConcept {
   uri: string;
   notation?: string;
   label?: string;
+  labelLang?: string;
   scopeNote?: string;
+  scopeNoteLang?: string;
   broader?: string;
   seeAlso: string[];
   seeConditionally: string[];
@@ -71,6 +73,8 @@ function parseConcepts(ttl: string): Map<string, RawConcept> {
     const s = q.subject.value;
     const p = q.predicate.value;
     const o = q.object.value;
+    // Labels/notes are multilingual (@en/@de …) — always prefer English.
+    const lang = q.object.termType === "Literal" ? q.object.language : "";
     switch (p) {
       case RDF_TYPE:
         if (o === `${SKOS}Concept`) get(s).isConcept = true;
@@ -78,12 +82,22 @@ function parseConcepts(ttl: string): Map<string, RawConcept> {
       case `${SKOS}notation`:
         get(s).notation = o;
         break;
-      case `${SKOS}prefLabel`:
-        get(s).label = o;
+      case `${SKOS}prefLabel`: {
+        const c = get(s);
+        if (c.labelLang !== "en" && (lang === "en" || !c.label)) {
+          c.label = o;
+          c.labelLang = lang;
+        }
         break;
-      case `${SKOS}scopeNote`:
-        get(s).scopeNote = o;
+      }
+      case `${SKOS}scopeNote`: {
+        const c = get(s);
+        if (c.scopeNoteLang !== "en" && (lang === "en" || !c.scopeNote)) {
+          c.scopeNote = o;
+          c.scopeNoteLang = lang;
+        }
         break;
+      }
       case `${SKOS}broader`:
         get(s).broader = o;
         break;
@@ -148,19 +162,26 @@ async function main() {
     });
   }
 
+  // Prune entire MSC sections (fields + all their descendants) that have no
+  // grand-branch mapping — e.g. physics (70-86) and computer science (68, 94),
+  // which are excluded from the mathematics map.
+  const keptCodes = new Set<string>();
+  for (const c of valid) {
+    if (branchForMscPrefix(c.notation!.slice(0, 2))) keptCodes.add(c.notation!);
+  }
+
   let skippedNoBranch = 0;
   for (const c of valid) {
     const code = c.notation!;
+    if (!keptCodes.has(code)) {
+      skippedNoBranch++;
+      continue;
+    }
     const { type, depth } = levelOf(code);
 
     let parentId: string | null = null;
     if (type === "field") {
-      const branch = branchForMscPrefix(code.slice(0, 2));
-      if (!branch) {
-        skippedNoBranch++;
-        continue;
-      }
-      parentId = branch.id;
+      parentId = branchForMscPrefix(code.slice(0, 2))!.id;
     } else if (c.broader) {
       const parentCode = uriToCode.get(c.broader);
       if (parentCode) parentId = `msc:${parentCode}`;
@@ -188,16 +209,20 @@ async function main() {
     }
     for (const target of c.seeAlso) {
       const tCode = uriToCode.get(target);
-      if (tCode) edgeRows.push({ source: id, target: `msc:${tCode}`, type: "see-also" });
+      if (tCode && keptCodes.has(tCode)) {
+        edgeRows.push({ source: id, target: `msc:${tCode}`, type: "see-also" });
+      }
     }
     for (const target of c.seeConditionally) {
       const tCode = uriToCode.get(target);
-      if (tCode) edgeRows.push({ source: id, target: `msc:${tCode}`, type: "related" });
+      if (tCode && keptCodes.has(tCode)) {
+        edgeRows.push({ source: id, target: `msc:${tCode}`, type: "related" });
+      }
     }
   }
 
   if (skippedNoBranch > 0) {
-    console.warn(`Skipped ${skippedNoBranch} top-level fields with no grand branch mapping`);
+    console.warn(`Skipped ${skippedNoBranch} concepts in unmapped sections (physics/CS)`);
   }
   console.log(`Prepared ${nodeRows.length} nodes, ${edgeRows.length} edges. Writing...`);
 

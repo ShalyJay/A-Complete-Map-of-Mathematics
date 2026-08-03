@@ -103,14 +103,9 @@ const FIELD_ALIASES: Record<string, string> = {
   "extremal graph theory": "05Cxx",
   "ramsey theory": "05Dxx",
   "enumerative combinatorics": "05Axx",
-  "coding theory": "94Bxx",
-  "information theory": "94Axx",
-  "computer science": "68-XX",
-  "theoretical computer science": "68Qxx",
-  "computational complexity theory": "68Qxx",
-  "formal languages": "68Qxx",
-  algorithms: "68Wxx",
-  cryptography: "94Axx",
+  // Physics and computer science sections are excluded from the map, so no
+  // aliases target 68/94/70-86; cryptography maps to its number-theory home.
+  cryptography: "11T71",
   "probability theory": "60-XX",
   probability: "60-XX",
   statistics: "62-XX",
@@ -124,20 +119,6 @@ const FIELD_ALIASES: Record<string, string> = {
   "mathematical optimization": "90Cxx",
   "control theory": "93-XX",
   "numerical analysis": "65-XX",
-  "classical mechanics": "70-XX",
-  "fluid dynamics": "76-XX",
-  "fluid mechanics": "76-XX",
-  "quantum mechanics": "81-XX",
-  "quantum field theory": "81Txx",
-  "statistical mechanics": "82-XX",
-  "general relativity": "83-XX",
-  relativity: "83-XX",
-  electromagnetism: "78-XX",
-  optics: "78Axx",
-  thermodynamics: "80-XX",
-  astronomy: "85-XX",
-  geophysics: "86-XX",
-  "mathematical physics": "81-XX",
   "fixed points (mathematics)": "47H10",
   "fixed-point theorems": "47H10",
   "inequalities (mathematics)": "26Dxx",
@@ -313,6 +294,7 @@ async function main() {
   // catastrophic query plan on QLever (>30s timeout); per-class runs in ~3s.
   const entities: Array<SparqlBinding & { __class: string }> = [];
   const fieldLinks: SparqlBinding[] = [];
+  const depLinks: SparqlBinding[] = [];
   for (const cls of CLASSES) {
     const rows = await sparql(
       `SELECT DISTINCT ?item ?label ?desc ?msc ?article WHERE {
@@ -336,7 +318,19 @@ async function main() {
       `wd-field-links-${cls.qid}`,
     );
     fieldLinks.push(...links);
-    console.log(`  ${cls.qid} (${cls.type}): ${rows.length} rows, ${links.length} field links`);
+    // Derivation links: "this theorem is inferred from / based on / uses that
+    // theorem or axiom" — the raw material for the progressive layout.
+    const deps = await sparql(
+      `SELECT DISTINCT ?item ?dep WHERE {
+        ?item wdt:P31/wdt:P279* wd:${cls.qid} .
+        ?item ?p ?dep . VALUES ?p { wdt:P3452 wdt:P144 wdt:P737 wdt:P2283 }
+      }`,
+      `wd-deps-${cls.qid}`,
+    );
+    depLinks.push(...deps);
+    console.log(
+      `  ${cls.qid} (${cls.type}): ${rows.length} rows, ${links.length} field links, ${deps.length} dependency links`,
+    );
   }
 
   // ---- Aggregate entity rows by item ----------------------------------------
@@ -452,6 +446,24 @@ async function main() {
   console.log(
     `Attachment: ${attachedDirect} direct MSC, ${attachedField} via field link, ${attachedCat} via categories, ${unattached} unattached (skipped)`,
   );
+
+  // ---- Dependency edges between attached entities ----------------------------
+  // source = the dependent result, target = its prerequisite (axiom/theorem).
+  const insertedIds = new Set(nodeRows.map((n) => n.id));
+  const depPairs = new Set<string>();
+  for (const b of depLinks) {
+    if (!b.item || !b.dep) continue;
+    const src = `wd:${qidOf(b.item.value)}`;
+    const tgt = `wd:${qidOf(b.dep.value)}`;
+    if (src === tgt) continue;
+    if (!insertedIds.has(src) || !insertedIds.has(tgt)) continue;
+    depPairs.add(`${src} ${tgt}`);
+  }
+  for (const pair of depPairs) {
+    const [source, target] = pair.split(" ");
+    edgeRows.push({ source, target, type: "depends-on" });
+  }
+  console.log(`Dependency edges between attached entities: ${depPairs.size}`);
 
   // ---- Enrich MSC nodes with QIDs / Wikipedia URLs ---------------------------
   const enrich = new Map<string, { qid: string; article?: string; desc?: string }>();

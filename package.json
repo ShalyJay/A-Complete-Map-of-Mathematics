@@ -13,11 +13,13 @@
     "ingest:msc": "node --import tsx scripts/ingest-msc.ts",
     "ingest:wikidata": "node --import tsx scripts/ingest-wikidata.ts",
     "ingest:wikipedia": "node --import tsx scripts/ingest-wikipedia.ts",
-    "ingest:all": "node --import tsx scripts/ingest-msc.ts && node --import tsx scripts/ingest-wikidata.ts && node --import tsx scripts/ingest-wikipedia.ts"
+    "ingest:deps": "node --import tsx scripts/ingest-dependencies.ts",
+    "ingest:all": "node --import tsx scripts/ingest-msc.ts && node --import tsx scripts/ingest-wikidata.ts && node --import tsx scripts/ingest-dependencies.ts && node --import tsx scripts/ingest-wikipedia.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
     "@electric-sql/pglite": "^0.5.4",
+    "@sigma/edge-curve": "^3.1.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.0",
     "drizzle-orm": "^0.45.2",

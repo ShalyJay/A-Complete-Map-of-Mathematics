@@ -44,12 +44,18 @@ export default function DocumentsPanel({
   const [file, setFile] = useState<File | null>(null);
   const [coverage, setCoverage] = useState<CoverageRow[] | null>(null);
   const [mode, setMode] = useState<"list" | "upload">("list");
+  const [method, setMethod] = useState<"keyword" | "llm">("keyword");
+  const [apiKey, setApiKey] = useState("");
+  const [llmConfigured, setLlmConfigured] = useState(false);
 
   const refresh = useCallback(() => {
     setLoading(true);
     fetch("/api/documents")
       .then((r) => r.json())
-      .then((d) => setDocs(d.documents ?? []))
+      .then((d) => {
+        setDocs(d.documents ?? []);
+        setLlmConfigured(!!d.llmConfigured);
+      })
       .catch(() => setDocs([]))
       .finally(() => setLoading(false));
   }, []);
@@ -77,6 +83,8 @@ export default function DocumentsPanel({
       const form = new FormData();
       form.set("title", title.trim() || file?.name || "Untitled document");
       form.set("kind", kind);
+      form.set("method", method);
+      if (method === "llm" && apiKey.trim()) form.set("apiKey", apiKey.trim());
       if (file) form.set("file", file);
       if (text.trim()) form.set("text", text.trim());
       const res = await fetch("/api/documents", { method: "POST", body: form });
@@ -126,8 +134,8 @@ export default function DocumentsPanel({
         {mode === "upload" ? (
           <form onSubmit={submit} className="flex flex-col gap-3">
             <p className="text-sm text-slate-400">
-              Upload a PDF or paste text from a paper, syllabus, or exam. An LLM maps
-              it onto the MSC taxonomy and paints a coverage heatmap on the map.
+              Upload a PDF or paste text from a paper, syllabus, or exam. Its topics
+              get mapped onto the MSC taxonomy and painted as a coverage heatmap.
             </p>
             {!signedIn && (
               <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200/90">
@@ -177,6 +185,51 @@ export default function DocumentsPanel({
                 className="mt-1 w-full resize-y rounded-lg border border-slate-700/60 bg-slate-800/60 px-3 py-2 text-sm outline-none"
               />
             </label>
+            <div>
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
+                Analysis method
+              </p>
+              <div className="flex rounded-lg border border-slate-700/60 bg-slate-800/60 p-1 text-sm">
+                <button
+                  type="button"
+                  onClick={() => setMethod("keyword")}
+                  className={`flex-1 rounded-md px-3 py-1.5 ${method === "keyword" ? "bg-slate-600/60 text-white" : "text-slate-400 hover:text-white"}`}
+                >
+                  Keyword matching
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMethod("llm")}
+                  className={`flex-1 rounded-md px-3 py-1.5 ${method === "llm" ? "bg-slate-600/60 text-white" : "text-slate-400 hover:text-white"}`}
+                >
+                  AI (Claude)
+                </button>
+              </div>
+              <p className="mt-1.5 text-xs leading-snug text-slate-500">
+                {method === "keyword"
+                  ? "Fast and offline: scans the text for topic and theorem names. No API key needed."
+                  : "Deeper semantic analysis via the Anthropic API."}
+              </p>
+              {method === "llm" && !llmConfigured && (
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Anthropic API key (sk-ant-…)"
+                  className="mt-2 w-full rounded-lg border border-slate-700/60 bg-slate-800/60 px-3 py-2 text-sm outline-none placeholder:text-slate-500"
+                />
+              )}
+              {method === "llm" && llmConfigured && (
+                <p className="mt-1.5 text-xs text-emerald-400/80">
+                  Server API key configured — no key needed.
+                </p>
+              )}
+              {method === "llm" && !llmConfigured && (
+                <p className="mt-1.5 text-xs leading-snug text-slate-500">
+                  Used only for this request — never stored.
+                </p>
+              )}
+            </div>
             {error && (
               <p className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
                 {error}
@@ -184,10 +237,18 @@ export default function DocumentsPanel({
             )}
             <button
               type="submit"
-              disabled={uploading || (!file && !text.trim())}
+              disabled={
+                uploading ||
+                (!file && !text.trim()) ||
+                (method === "llm" && !llmConfigured && !apiKey.trim())
+              }
               className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
             >
-              {uploading ? "Analyzing… this can take ~30s" : "Analyze & show heatmap"}
+              {uploading
+                ? method === "llm"
+                  ? "Analyzing… this can take ~30s"
+                  : "Analyzing…"
+                : "Analyze & show heatmap"}
             </button>
           </form>
         ) : (

@@ -22,7 +22,7 @@ export async function GET() {
       type: schema.edges.type,
     })
     .from(schema.edges)
-    .where(inArray(schema.edges.type, ["see-also", "related"]));
+    .where(inArray(schema.edges.type, ["see-also", "related", "depends-on"]));
 
   const raw = (Array.isArray(rows) ? rows : (rows as { rows: Record<string, unknown>[] }).rows) as Record<
     string,
