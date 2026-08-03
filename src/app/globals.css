@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #070b14;
+  --panel: rgba(15, 23, 42, 0.85);
+  --border: rgba(148, 163, 184, 0.15);
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* thin scrollbars for panels */
+.panel-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.panel-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 3px;
+}
+.panel-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}

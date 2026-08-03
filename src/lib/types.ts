@@ -1,0 +1,64 @@
+/** Shared client/server types. */
+
+export interface GraphNodeLite {
+  id: string;
+  title: string;
+  type: string; // branch | field | subfield | topic | theorem | axiom | conjecture | definition
+  depth: number;
+  parentId: string | null;
+  childCount: number;
+}
+
+export interface GraphEdgeLite {
+  source: string;
+  target: string;
+  type: string; // see-also | related (child-of is derived from parentId)
+}
+
+export interface GraphPayload {
+  nodes: GraphNodeLite[];
+  edges: GraphEdgeLite[];
+}
+
+export interface NodeDetail {
+  id: string;
+  mscCode: string | null;
+  wikidataQid: string | null;
+  type: string;
+  title: string;
+  summary: string | null;
+  wikipediaUrl: string | null;
+  thumbnailUrl: string | null;
+  depth: number;
+  parentId: string | null;
+  connections: {
+    id: string;
+    title: string;
+    type: string;
+    relation: string; // child | parent | see-also | related
+  }[];
+}
+
+export interface UserNodeStateLite {
+  nodeId: string;
+  mastery: number;
+  isProblemArea: boolean;
+  notes: string | null;
+}
+
+export interface DocumentLite {
+  id: string;
+  title: string;
+  kind: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface DocumentNodeLite {
+  nodeId: string;
+  weight: number;
+  rationale: string | null;
+  direct: boolean;
+}
+
+export type OverlayMode = "none" | "mastery" | { documentId: string };

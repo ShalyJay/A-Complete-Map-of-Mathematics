@@ -1,0 +1,50 @@
+{
+  "name": "math-map",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:push": "drizzle-kit push",
+    "db:ensure": "node --import tsx scripts/ensure-schema.ts",
+    "db:studio": "drizzle-kit studio",
+    "ingest:msc": "node --import tsx scripts/ingest-msc.ts",
+    "ingest:wikidata": "node --import tsx scripts/ingest-wikidata.ts",
+    "ingest:wikipedia": "node --import tsx scripts/ingest-wikipedia.ts",
+    "ingest:all": "node --import tsx scripts/ingest-msc.ts && node --import tsx scripts/ingest-wikidata.ts && node --import tsx scripts/ingest-wikipedia.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@electric-sql/pglite": "^0.5.4",
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.112.0",
+    "drizzle-orm": "^0.45.2",
+    "fuse.js": "^7.5.0",
+    "graphology": "^0.26.0",
+    "graphology-layout": "^0.6.1",
+    "graphology-layout-forceatlas2": "^0.10.1",
+    "graphology-types": "^0.24.8",
+    "n3": "^2.1.2",
+    "next": "^16.2.12",
+    "postgres": "^3.4.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "sigma": "^3.0.3",
+    "unpdf": "^1.8.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/n3": "^1.26.1",
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "drizzle-kit": "^0.31.10",
+    "postcss": "^8.5.25",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.5",
+    "typescript": "^7.0.2"
+  }
+}
