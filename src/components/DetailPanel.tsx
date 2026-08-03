@@ -190,31 +190,47 @@ export default function DetailPanel({
           )}
         </div>
 
-        {/* connections */}
-        {[...grouped.entries()].map(([relation, items]) => (
-          <div key={relation} className="mb-3">
-            <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">
-              {RELATION_LABELS[relation] ?? relation} ({items.length})
-            </p>
-            <div className="flex flex-col gap-1">
-              {items.slice(0, 15).map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => onNavigate(c.id)}
-                  className="truncate rounded-lg px-2.5 py-1.5 text-left text-sm text-slate-300 hover:bg-slate-700/40 hover:text-white"
-                  title={c.title}
-                >
-                  {c.title}
-                </button>
-              ))}
-              {items.length > 15 && (
-                <p className="px-2.5 text-xs text-slate-500">
-                  +{items.length - 15} more
-                </p>
-              )}
+        {/* connections: what each link points to, and why they're connected */}
+        {[...grouped.entries()].map(([relation, items]) => {
+          const showWhy = relation !== "parent" && relation !== "child";
+          return (
+            <div key={relation} className="mb-3">
+              <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">
+                {RELATION_LABELS[relation] ?? relation} ({items.length})
+              </p>
+              <div className="flex flex-col gap-1">
+                {items.slice(0, 15).map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => onNavigate(c.id)}
+                    className="rounded-lg px-2.5 py-1.5 text-left hover:bg-slate-700/40"
+                    title={c.title}
+                  >
+                    <span
+                      className={`block truncate text-sm ${
+                        relation === "builds-on" || relation === "leads-to"
+                          ? "text-amber-200/90"
+                          : "text-slate-300"
+                      }`}
+                    >
+                      {c.title}
+                    </span>
+                    {showWhy && c.note && (
+                      <span className="mt-0.5 block text-xs leading-snug text-slate-500">
+                        {c.note}
+                      </span>
+                    )}
+                  </button>
+                ))}
+                {items.length > 15 && (
+                  <p className="px-2.5 text-xs text-slate-500">
+                    +{items.length - 15} more
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </aside>
   );

@@ -94,12 +94,9 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "File too large (15 MB max)" }, { status: 400 });
       }
       const buf = await file.arrayBuffer();
-      const name = file.name.toLowerCase();
-      if (name.endsWith(".pdf") || file.type === "application/pdf") {
-        text = await extractPdfText(buf);
-      } else {
-        text = new TextDecoder().decode(buf);
-      }
+
+      // save to disk first: pdf.js transfers (detaches) the buffer we hand it,
+      // so it must get its own copy and the original must be persisted before
       const fs = await import("node:fs/promises");
       const path = await import("node:path");
       const dir = path.join(process.cwd(), ".data", "uploads");
@@ -107,6 +104,21 @@ export async function POST(req: Request) {
       const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
       storagePath = path.join(dir, `${Date.now()}-${safe}`);
       await fs.writeFile(storagePath, Buffer.from(buf));
+
+      const name = file.name.toLowerCase();
+      try {
+        if (name.endsWith(".pdf") || file.type === "application/pdf") {
+          text = await extractPdfText(buf.slice(0));
+        } else {
+          text = new TextDecoder().decode(buf);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return NextResponse.json(
+          { error: `Could not read the file: ${message}` },
+          { status: 422 },
+        );
+      }
     } else if (parsed.data.text?.trim()) {
       text = parsed.data.text;
     } else {

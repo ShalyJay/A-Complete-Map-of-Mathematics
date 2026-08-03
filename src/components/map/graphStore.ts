@@ -14,6 +14,62 @@ export interface NodeIndex {
   ancestorsOf: (id: string) => string[];
 }
 
+/**
+ * Some grand branches wrap exactly one MSC field (Number Theory -> "Number
+ * theory" 11-XX, Discrete Mathematics -> "Combinatorics" 05-XX), which made
+ * clicking them feel like a pointless extra hop. Merge that lone field into
+ * the branch: its children move up, and the branch carries the MSC code as a
+ * sublabel.
+ */
+export function collapseSingleFieldBranches(payload: GraphPayload): GraphPayload {
+  const childrenOf = new Map<string, GraphNodeLite[]>();
+  for (const n of payload.nodes) {
+    if (!n.parentId) continue;
+    let arr = childrenOf.get(n.parentId);
+    if (!arr) childrenOf.set(n.parentId, (arr = []));
+    arr.push(n);
+  }
+
+  const removed = new Map<string, string>(); // field id -> branch id
+  const sublabels = new Map<string, string>();
+  for (const branch of payload.nodes) {
+    if (branch.depth !== 0) continue;
+    const kids = childrenOf.get(branch.id) ?? [];
+    if (kids.length !== 1 || kids[0].type !== "field") continue;
+    const field = kids[0];
+    removed.set(field.id, branch.id);
+    const code = field.id.startsWith("msc:") ? field.id.slice(4) : null;
+    const sameName = field.title.trim().toLowerCase() === branch.title.trim().toLowerCase();
+    const parts = [
+      ...(sameName ? [] : [field.title]),
+      ...(code ? [`MSC ${code}`] : []),
+    ];
+    if (parts.length > 0) sublabels.set(branch.id, parts.join(" · "));
+  }
+  if (removed.size === 0) return payload;
+
+  const nodes: GraphNodeLite[] = [];
+  for (const n of payload.nodes) {
+    if (removed.has(n.id)) continue;
+    let node = n;
+    if (n.parentId && removed.has(n.parentId)) {
+      node = { ...n, parentId: removed.get(n.parentId)! };
+    }
+    if (n.depth === 0) {
+      const fieldId = [...removed.entries()].find(([, b]) => b === n.id)?.[0];
+      const field = fieldId ? payload.nodes.find((x) => x.id === fieldId) : undefined;
+      node = {
+        ...node,
+        childCount: field ? field.childCount : node.childCount,
+        sublabel: sublabels.get(n.id),
+      };
+    }
+    nodes.push(node);
+  }
+  const edges = payload.edges.filter((e) => !removed.has(e.source) && !removed.has(e.target));
+  return { nodes, edges };
+}
+
 export function buildIndex(payload: GraphPayload): NodeIndex {
   const byId = new Map<string, GraphNodeLite>();
   const children = new Map<string, string[]>();
@@ -66,15 +122,17 @@ export function buildIndex(payload: GraphPayload): NodeIndex {
 
 /** Big labeled bubbles for taxonomy levels; small dots for leaf entities. */
 const SIZE_BY_TYPE: Record<string, number> = {
-  branch: 42,
-  field: 22,
-  subfield: 15,
-  topic: 9,
+  branch: 44,
+  field: 25,
+  subfield: 18,
+  topic: 10,
   axiom: 7.5,
   conjecture: 4.2,
   theorem: 4,
   definition: 4,
 };
+
+const LABELED_TYPES = ["branch", "field", "subfield"];
 
 const DIM = "#334155";
 
@@ -114,8 +172,13 @@ export function buildGraph(payload: GraphPayload, index: NodeIndex): Graph {
     // the load-bearing theorems of the map.
     let size = SIZE_BY_TYPE[n.type] ?? 4;
     if (n.type === "theorem" && index.depsOf.has(n.id)) size = 5;
+    // labeled bubbles grow a little with longer titles so the text fits
+    if (LABELED_TYPES.includes(n.type)) {
+      size *= Math.min(1.3, Math.max(0.95, 0.85 + n.title.length / 80));
+    }
     graph.addNode(n.id, {
       label: n.title,
+      sublabel: n.sublabel,
       size,
       color: baseColor(n.id, index),
       x: 0,
@@ -125,7 +188,7 @@ export function buildGraph(payload: GraphPayload, index: NodeIndex): Graph {
       childCount: n.childCount,
       nodeType: n.type,
       // taxonomy bubbles carry their label inside the circle — never drop it
-      forceLabel: ["branch", "field", "subfield"].includes(n.type),
+      forceLabel: LABELED_TYPES.includes(n.type),
     });
   }
 
@@ -148,11 +211,12 @@ export function buildGraph(payload: GraphPayload, index: NodeIndex): Graph {
   for (const e of payload.edges) {
     if (!graph.hasNode(e.source) || !graph.hasNode(e.target)) continue;
     if (e.type === "depends-on") {
-      // stored as dependent -> prerequisite; draw the arrow in derivation
-      // direction (prerequisite -> dependent) so chains read axiom -> theorem.
+      // stored as dependent -> prerequisite; flipped so source is the
+      // prerequisite. These edges are always hidden on the base layer — the
+      // map draws them as arrows on the top canvas, above the bubbles.
       graph.addEdgeWithKey(`d:${i++}`, e.target, e.source, {
         edgeKind: "depends-on",
-        type: "curvedArrow",
+        type: "curved",
         curvature: 0.15,
         size: 1.1,
         color: "rgba(251,146,60,0.65)",

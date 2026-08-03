@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import Sigma from "sigma";
 import type { Settings } from "sigma/settings";
 import type { NodeDisplayData, PartialButFor } from "sigma/types";
-import EdgeCurveProgram, { EdgeCurvedArrowProgram } from "@sigma/edge-curve";
+import EdgeCurveProgram from "@sigma/edge-curve";
 import type Graph from "graphology";
 import type { NodeIndex } from "./graphStore";
 import { baseColor } from "./graphStore";
@@ -35,7 +35,9 @@ const ANIM_MS = 500;
 /** bubbles at least this big get their label drawn inside the circle */
 const INSIDE_LABEL_SIZE = 13;
 
-type LabelData = PartialButFor<NodeDisplayData, "x" | "y" | "size" | "label" | "color">;
+type LabelData = PartialButFor<NodeDisplayData, "x" | "y" | "size" | "label" | "color"> & {
+  sublabel?: string;
+};
 
 /** Word-wrap `text` to fit `maxWidth`, at most `maxLines` lines. */
 function wrapText(
@@ -69,6 +71,67 @@ function wrapText(
   return lines;
 }
 
+/**
+ * Fit a label inside a circle of the given radius: wrap to up to 4 lines and
+ * shrink the font until every line fits the chord at its own height.
+ */
+function fitInsideCircle(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  radius: number,
+  font: string,
+): { lines: string[]; fontSize: number } {
+  let fontSize = Math.max(8, Math.min(16, radius / 2.4));
+  for (let attempt = 0; attempt < 7; attempt++) {
+    ctx.font = `600 ${fontSize}px ${font}`;
+    const lines = wrapText(ctx, label, radius * 1.8, 4);
+    const lineHeight = fontSize + 2;
+    let ok = lines.length * lineHeight <= radius * 1.65;
+    if (ok) {
+      for (let j = 0; j < lines.length; j++) {
+        const dy = Math.abs((j - (lines.length - 1) / 2) * lineHeight) + fontSize * 0.4;
+        const chord = 2 * Math.sqrt(Math.max(0, radius * radius - dy * dy)) * 0.94;
+        if (ctx.measureText(lines[j]).width > chord) {
+          ok = false;
+          break;
+        }
+      }
+    }
+    if (ok || fontSize <= 6.5) return { lines, fontSize };
+    fontSize = Math.max(6.5, fontSize * 0.86);
+  }
+  ctx.font = `600 ${fontSize}px ${font}`;
+  return { lines: wrapText(ctx, label, radius * 1.7, 4), fontSize };
+}
+
+/** Render a fitted label (plus optional sublabel) centered inside a circle. */
+function drawInsideLabel(
+  ctx: CanvasRenderingContext2D,
+  data: { x: number; y: number; size: number; label: string; sublabel?: string },
+  font: string,
+): void {
+  const { lines, fontSize } = fitInsideCircle(ctx, data.label, data.size, font);
+  const lineHeight = fontSize + 2;
+  const sub = data.sublabel;
+  const subFont = Math.max(6.5, fontSize * 0.75);
+  const blockShift = sub ? -(subFont + 3) / 2 : 0;
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `600 ${fontSize}px ${font}`;
+  lines.forEach((line, i) => {
+    const y =
+      data.y + blockShift + (i - (lines.length - 1) / 2) * lineHeight + fontSize * 0.35;
+    ctx.fillText(line, data.x, y);
+  });
+  if (sub) {
+    ctx.font = `500 ${subFont}px ${font}`;
+    ctx.fillStyle = "rgba(255,255,255,0.72)";
+    const y = data.y + blockShift + ((lines.length - 1) / 2) * lineHeight + fontSize * 0.35;
+    ctx.fillText(sub, data.x, y + subFont + 4);
+  }
+  ctx.textAlign = "left";
+}
+
 /** Draw the label inside big bubbles, beside small dots. */
 function drawNodeLabel(
   ctx: CanvasRenderingContext2D,
@@ -77,25 +140,11 @@ function drawNodeLabel(
 ): void {
   if (!data.label) return;
   if (data.size >= INSIDE_LABEL_SIZE) {
-    const maxWidth = data.size * 1.75;
-    let fontSize = Math.max(9, Math.min(16, data.size / 2.4));
-    ctx.font = `600 ${fontSize}px ${settings.labelFont}`;
-    let lines = wrapText(ctx, data.label, maxWidth, 3);
-    // long single words can overflow the bubble — shrink the font to fit
-    const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
-    if (widest > maxWidth) {
-      fontSize = Math.max(7, fontSize * (maxWidth / widest));
-      ctx.font = `600 ${fontSize}px ${settings.labelFont}`;
-      lines = wrapText(ctx, data.label, maxWidth, 3);
-    }
-    const lineHeight = fontSize + 2;
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#ffffff";
-    lines.forEach((line, i) => {
-      const y = data.y + (i - (lines.length - 1) / 2) * lineHeight + fontSize * 0.35;
-      ctx.fillText(line, data.x, y);
-    });
-    ctx.textAlign = "left";
+    drawInsideLabel(
+      ctx,
+      { x: data.x, y: data.y, size: data.size, label: data.label, sublabel: data.sublabel },
+      settings.labelFont,
+    );
   } else {
     ctx.font = `${settings.labelWeight} ${settings.labelSize}px ${settings.labelFont}`;
     ctx.fillStyle = "#cbd5e1";
@@ -103,17 +152,19 @@ function drawNodeLabel(
   }
 }
 
-/** Hover: same inside-label for bubbles; dark pill beside small dots. */
+/**
+ * Hover: dark pill beside small dots. Big bubbles draw nothing here — sigma
+ * repaints the hovered node's circle ON TOP of whatever this function draws,
+ * which would bury an inside-the-circle label. Their hover label is drawn on
+ * the top overlay canvas instead (see drawTop in the component).
+ */
 function drawNodeHover(
   ctx: CanvasRenderingContext2D,
   data: LabelData,
   settings: Settings,
 ): void {
   if (!data.label) return;
-  if (data.size >= INSIDE_LABEL_SIZE) {
-    drawNodeLabel(ctx, data, settings);
-    return;
-  }
+  if (data.size >= INSIDE_LABEL_SIZE) return;
   const size = settings.labelSize;
   ctx.font = `${settings.labelWeight} ${size}px ${settings.labelFont}`;
   const w = ctx.measureText(data.label).width;
@@ -158,6 +209,7 @@ export default function MathMap({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const ringsRef = useRef<HTMLCanvasElement>(null);
+  const topRef = useRef<HTMLCanvasElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const onSelectRef = useRef(onSelect);
   const onToggleRef = useRef(onToggleExpand);
@@ -169,9 +221,22 @@ export default function MathMap({
   const levelsRef = useRef<Map<string, number> | null>(null);
   const prevVisibleRef = useRef<Set<string>>(new Set());
   const animRef = useRef<number | null>(null);
-  /** hover state read by the reducers */
+  /** hover state (transient) and selection state (persistent), read by reducers */
   const hoverRef = useRef<string | null>(null);
   const hoverChainRef = useRef<Set<string>>(new Set());
+  const selectedRef = useRef<string | null>(null);
+  const selChainRef = useRef<Set<string>>(new Set());
+
+  /** the tracing focus right now: hover wins, else a selected node with a chain */
+  const activeTrace = (): { id: string; chain: Set<string> } | null => {
+    if (hoverRef.current) return { id: hoverRef.current, chain: hoverChainRef.current };
+    if (selectedRef.current && selChainRef.current.size > 0) {
+      return { id: selectedRef.current, chain: selChainRef.current };
+    }
+    return null;
+  };
+  const activeTraceRef = useRef(activeTrace);
+  activeTraceRef.current = activeTrace;
 
   // ---- init sigma ------------------------------------------------------------
   useEffect(() => {
@@ -196,16 +261,21 @@ export default function MathMap({
       defaultDrawNodeHover: drawNodeHover,
       edgeProgramClasses: {
         curved: EdgeCurveProgram,
-        curvedArrow: EdgeCurvedArrowProgram,
       },
       nodeReducer: (node, data) => {
-        const hover = hoverRef.current;
-        if (!hover) return data;
+        const trace = activeTraceRef.current();
         const res = { ...data };
-        if (node === hover) {
-          res.highlighted = true;
+        if (!trace) {
+          if (node === selectedRef.current) {
+            res.forceLabel = true;
+            res.zIndex = 3;
+          }
+          return res;
+        }
+        if (node === trace.id) {
           res.zIndex = 3;
-        } else if (hoverChainRef.current.has(node)) {
+          res.forceLabel = true;
+        } else if (trace.chain.has(node)) {
           res.zIndex = 2;
           res.forceLabel = true;
         } else {
@@ -216,20 +286,12 @@ export default function MathMap({
         return res;
       },
       edgeReducer: (edge, data) => {
-        const hover = hoverRef.current;
-        if (!hover) return data;
+        const trace = activeTraceRef.current();
+        if (!trace) return data;
         const res = { ...data };
         const [s, t] = graph.extremities(edge);
-        const inChain = (n: string) => n === hover || hoverChainRef.current.has(n);
-        if (inChain(s) && inChain(t)) {
-          if (graph.getEdgeAttribute(edge, "edgeKind") === "depends-on") {
-            res.color = "rgba(251,146,60,0.95)";
-            res.size = 2.2;
-          }
-          res.zIndex = 2;
-        } else {
-          res.hidden = true;
-        }
+        const inChain = (n: string) => n === trace.id || trace.chain.has(n);
+        if (!(inChain(s) && inChain(t))) res.hidden = true;
         return res;
       },
     });
@@ -251,23 +313,26 @@ export default function MathMap({
         if (n?.parentId) chain.add(n.parentId);
         hoverRef.current = node;
         hoverChainRef.current = chain;
-        sigma.refresh({ skipIndexation: true });
       }
+      // always refresh so the top canvas can redraw the hovered bubble's label
+      sigma.refresh({ skipIndexation: true });
     });
     sigma.on("leaveNode", () => {
       containerRef.current!.style.cursor = "default";
-      if (hoverRef.current) {
-        hoverRef.current = null;
-        hoverChainRef.current = new Set();
-        sigma.refresh({ skipIndexation: true });
-      }
+      hoverRef.current = null;
+      hoverChainRef.current = new Set();
+      sigma.refresh({ skipIndexation: true });
     });
 
-    // ---- concentric ring guides ------------------------------------------------
-    const drawRings = () => {
-      const canvas = ringsRef.current;
-      const container = containerRef.current;
-      if (!canvas || !container) return;
+    // list of depends-on edges (source = prerequisite, target = dependent),
+    // drawn on the top canvas so derivation lines sit above the bubbles
+    const depEdges: { s: string; t: string }[] = [];
+    graph.forEachEdge((_e, attrs, s, t) => {
+      if (attrs.edgeKind === "depends-on") depEdges.push({ s, t });
+    });
+
+    const sizeCanvas = (canvas: HTMLCanvasElement) => {
+      const container = containerRef.current!;
       const w = container.clientWidth;
       const h = container.clientHeight;
       const dpr = window.devicePixelRatio || 1;
@@ -275,10 +340,24 @@ export default function MathMap({
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);
       }
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+      const ctx = canvas.getContext("2d")!;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
+      return ctx;
+    };
+
+    /** displayed pixel radius of a node at the current zoom */
+    const pxSize = (v: number) => {
+      const s = sigma as unknown as { scaleSize?: (v: number) => number };
+      return typeof s.scaleSize === "function"
+        ? s.scaleSize(v)
+        : v / Math.sqrt(sigma.getCamera().ratio);
+    };
+
+    // ---- background: concentric ring guides -------------------------------------
+    const drawRings = () => {
+      if (!ringsRef.current || !containerRef.current) return;
+      const ctx = sizeCanvas(ringsRef.current);
       const c = sigma.graphToViewport({ x: 0, y: 0 });
       const p = sigma.graphToViewport({ x: 100, y: 0 });
       const scale = Math.hypot(p.x - c.x, p.y - c.y) / 100;
@@ -301,7 +380,156 @@ export default function MathMap({
         ctx.stroke();
       }
     };
-    sigma.on("afterRender", drawRings);
+
+    // ---- foreground: derivation arrows + selection ring above the bubbles --------
+    const nodeXY = (id: string) =>
+      sigma.graphToViewport({
+        x: graph.getNodeAttribute(id, "x") as number,
+        y: graph.getNodeAttribute(id, "y") as number,
+      });
+
+    const drawArrow = (
+      ctx: CanvasRenderingContext2D,
+      s: string,
+      t: string,
+      color: string,
+      width: number,
+    ) => {
+      const p1 = nodeXY(s);
+      const p2 = nodeXY(t);
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 4) return;
+      const r1 = pxSize(graph.getNodeAttribute(s, "size") as number);
+      const r2 = pxSize(graph.getNodeAttribute(t, "size") as number);
+      // control point offset perpendicular to the segment (matches the curved
+      // edge feel of the base layer)
+      const cx = (p1.x + p2.x) / 2 - dy * 0.18;
+      const cy = (p1.y + p2.y) / 2 + dx * 0.18;
+      // trim ends to the node boundaries
+      const d1 = Math.hypot(cx - p1.x, cy - p1.y);
+      const a1 = { x: p1.x + ((cx - p1.x) / d1) * (r1 + 1), y: p1.y + ((cy - p1.y) / d1) * (r1 + 1) };
+      const d2 = Math.hypot(p2.x - cx, p2.y - cy);
+      const tipGap = r2 + 2;
+      const tip = { x: p2.x - ((p2.x - cx) / d2) * tipGap, y: p2.y - ((p2.y - cy) / d2) * tipGap };
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(a1.x, a1.y);
+      ctx.quadraticCurveTo(cx, cy, tip.x, tip.y);
+      ctx.stroke();
+
+      // arrowhead pointing along the curve tangent at the tip
+      const tx = (p2.x - cx) / d2;
+      const ty = (p2.y - cy) / d2;
+      const ah = Math.max(5, Math.min(11, 4 + width * 2.2));
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(tip.x + tx * ah, tip.y + ty * ah);
+      ctx.lineTo(tip.x - ty * (ah * 0.45), tip.y + tx * (ah * 0.45));
+      ctx.lineTo(tip.x + ty * (ah * 0.45), tip.y - tx * (ah * 0.45));
+      ctx.closePath();
+      ctx.fill();
+    };
+
+    /** nearest ancestor (or self) that is currently rendered on the map */
+    const visibleAnchor = (id: string): string | null => {
+      let cur: string | undefined = id;
+      while (cur) {
+        if (graph.hasNode(cur) && !(graph.getNodeAttribute(cur, "hidden") as boolean)) {
+          return cur;
+        }
+        cur = index.byId.get(cur)?.parentId ?? undefined;
+      }
+      return null;
+    };
+
+    const drawTop = () => {
+      if (!topRef.current || !containerRef.current) return;
+      const ctx = sizeCanvas(topRef.current);
+      const trace = activeTraceRef.current();
+
+      const isShown = (id: string) =>
+        graph.hasNode(id) && !(graph.getNodeAttribute(id, "hidden") as boolean);
+
+      if (trace) {
+        // tracing: draw only the pinned/hovered chain, bright
+        const inChain = (n: string) => n === trace.id || trace.chain.has(n);
+        for (const { s, t } of depEdges) {
+          if (!isShown(s) || !isShown(t)) continue;
+          if (inChain(s) && inChain(t)) drawArrow(ctx, s, t, "rgba(251,146,60,0.95)", 2.2);
+        }
+      } else {
+        // at rest: draw direct arrows where both ends are on screen, and roll
+        // hidden endpoints up to their nearest visible bubble so collapsed
+        // sections still show their interdependencies as aggregated arcs
+        const aggregated = new Map<string, { s: string; t: string; n: number }>();
+        for (const { s, t } of depEdges) {
+          if (isShown(s) && isShown(t)) {
+            drawArrow(ctx, s, t, "rgba(251,146,60,0.5)", 1.2);
+            continue;
+          }
+          const vs = visibleAnchor(s);
+          const vt = visibleAnchor(t);
+          if (!vs || !vt || vs === vt) continue;
+          const key = `${vs}\u0000${vt}`;
+          const agg = aggregated.get(key);
+          if (agg) agg.n += 1;
+          else aggregated.set(key, { s: vs, t: vt, n: 1 });
+        }
+        for (const { s, t, n } of aggregated.values()) {
+          const width = Math.min(3.5, 0.9 + Math.log2(n) * 0.7);
+          const alpha = Math.min(0.55, 0.25 + n * 0.05);
+          drawArrow(ctx, s, t, `rgba(251,146,60,${alpha})`, width);
+        }
+      }
+
+      // selection halo: a bright ring + soft amber glow around the picked node
+      const sel = selectedRef.current;
+      if (sel && isShown(sel)) {
+        const p = nodeXY(sel);
+        const r = pxSize(graph.getNodeAttribute(sel, "size") as number);
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = "rgba(251,191,36,0.28)";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r + 8, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255,255,255,0.92)";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r + 4, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+
+      // sigma repaints the hovered node's circle above its own labels layer,
+      // which would hide an inside-the-circle label — so redraw it up here
+      const hovered = (sigma as unknown as { hoveredNode: string | null }).hoveredNode;
+      if (hovered && isShown(hovered)) {
+        const r = pxSize(graph.getNodeAttribute(hovered, "size") as number);
+        if (r >= INSIDE_LABEL_SIZE) {
+          const p = nodeXY(hovered);
+          drawInsideLabel(
+            ctx,
+            {
+              x: p.x,
+              y: p.y,
+              size: r,
+              label: graph.getNodeAttribute(hovered, "label") as string,
+              sublabel: graph.getNodeAttribute(hovered, "sublabel") as string | undefined,
+            },
+            "Inter, ui-sans-serif, system-ui",
+          );
+        }
+      }
+    };
+
+    const drawDecorations = () => {
+      drawRings();
+      drawTop();
+    };
+    sigma.on("afterRender", drawDecorations);
 
     sigmaRef.current = sigma;
     return () => {
@@ -378,11 +606,12 @@ export default function MathMap({
     graph.forEachNode((id) => {
       graph.setNodeAttribute(id, "hidden", !visible.has(id));
     });
-    graph.forEachEdge((edge, _attrs, source, target) => {
+    graph.forEachEdge((edge, attrs, source, target) => {
+      // depends-on edges live on the top canvas, never on the base layer
       graph.setEdgeAttribute(
         edge,
         "hidden",
-        !visible.has(source) || !visible.has(target),
+        attrs.edgeKind === "depends-on" || !visible.has(source) || !visible.has(target),
       );
     });
     prevVisibleRef.current = visible;
@@ -413,17 +642,17 @@ export default function MathMap({
     }
   }, [expanded, selectedId, graph, index]);
 
-  // ---- selection highlight ------------------------------------------------------
+  // ---- selection: persistent chain trace + halo ---------------------------------
   useEffect(() => {
-    graph.forEachNode((id, attrs) => {
-      graph.setNodeAttribute(id, "highlighted", id === selectedId);
-      const taxonomyForce = ["branch", "field", "subfield"].includes(
-        attrs.nodeType as string,
-      );
-      graph.setNodeAttribute(id, "forceLabel", taxonomyForce || id === selectedId);
-    });
+    selectedRef.current = selectedId;
+    const chain = selectedId ? dependencyChain(index, selectedId) : new Set<string>();
+    if (chain.size > 0 && selectedId) {
+      const n = index.byId.get(selectedId);
+      if (n?.parentId) chain.add(n.parentId);
+    }
+    selChainRef.current = chain;
     sigmaRef.current?.refresh({ skipIndexation: true });
-  }, [selectedId, graph]);
+  }, [selectedId, graph, index]);
 
   // ---- overlay colors -------------------------------------------------------------
   useEffect(() => {
@@ -483,6 +712,10 @@ export default function MathMap({
     <div className="absolute inset-0">
       <canvas ref={ringsRef} className="pointer-events-none absolute inset-0 h-full w-full" />
       <div ref={containerRef} className="absolute inset-0" />
+      <canvas
+        ref={topRef}
+        className="pointer-events-none absolute inset-0 z-[5] h-full w-full"
+      />
     </div>
   );
 }

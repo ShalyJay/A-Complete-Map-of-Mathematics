@@ -9,7 +9,7 @@ import type {
   OverlayMode,
   UserNodeStateLite,
 } from "@/lib/types";
-import { buildGraph, buildIndex } from "./map/graphStore";
+import { buildGraph, buildIndex, collapseSingleFieldBranches } from "./map/graphStore";
 import { computeHeatColors, computeMasteryColors } from "./map/overlays";
 import type { FocusRequest } from "./map/MathMap";
 import SearchBox from "./SearchBox";
@@ -40,7 +40,7 @@ export default function AppShell() {
         if (!r.ok) throw new Error(`API error ${r.status}`);
         return r.json();
       })
-      .then(setPayload)
+      .then((p: GraphPayload) => setPayload(collapseSingleFieldBranches(p)))
       .catch((e) => setError(String(e)));
   }, []);
 
@@ -82,13 +82,14 @@ export default function AppShell() {
   }, [overlay, index, states, docNodes]);
 
   // ---- navigation ------------------------------------------------------------------
-  // Accordion expansion: only one chain is open at a time, so the selected
-  // section gets the whole free space around the ring to spread out into.
+  // Several sections can be expanded at once; the layout clamps each fan to
+  // the space its expanded neighbors leave free.
   const navigateTo = useCallback(
     (id: string) => {
       if (!index) return;
-      setExpanded(() => {
-        const next = new Set(index.ancestorsOf(id));
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        for (const a of index.ancestorsOf(id)) next.add(a);
         const node = index.byId.get(id);
         if (node && node.childCount > 0) next.add(id);
         return next;
@@ -99,18 +100,15 @@ export default function AppShell() {
     [index],
   );
 
-  const toggleExpand = useCallback(
-    (id: string) => {
-      if (!index) return;
-      setExpanded((prev) => {
-        const next = new Set(index.ancestorsOf(id));
-        if (!prev.has(id)) next.add(id); // collapse if it was open, else open it
-        return next;
-      });
-      setFocus({ id, nonce: ++nonce.current });
-    },
-    [index],
-  );
+  const toggleExpand = useCallback((id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    setFocus({ id, nonce: ++nonce.current });
+  }, []);
 
   const goHome = useCallback(() => {
     setExpanded(new Set());
@@ -121,11 +119,17 @@ export default function AppShell() {
   const breadcrumbNavigate = useCallback(
     (id: string) => {
       if (!index) return;
-      // collapse everything deeper than this node, keep its own expansion
-      setExpanded(() => {
-        const keep = new Set(index.ancestorsOf(id));
-        keep.add(id);
-        return keep;
+      // collapse everything deeper than this node within its own subtree, but
+      // leave other expanded branches alone
+      setExpanded((prev) => {
+        const next = new Set<string>();
+        for (const e of prev) {
+          if (e !== id && index.ancestorsOf(e).includes(id)) continue;
+          next.add(e);
+        }
+        for (const a of index.ancestorsOf(id)) next.add(a);
+        next.add(id);
+        return next;
       });
       setSelectedId(id);
       setFocus({ id, nonce: ++nonce.current });
@@ -304,7 +308,7 @@ export default function AppShell() {
 
       {/* hint */}
       <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 text-xs text-slate-500">
-        Click a node to explore · hover a theorem to trace its derivation · scroll to zoom
+        Click to explore · click a theorem to pin its derivation chain · scroll to zoom
       </div>
 
       {/* right side: detail panel or documents panel */}

@@ -45,7 +45,9 @@ export const edges = pgTable(
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     source: text("source").notNull(),
     target: text("target").notNull(),
-    type: text("type").notNull(), // child-of | see-also | related | prerequisite
+    type: text("type").notNull(), // child-of | see-also | related | depends-on
+    /** why the two nodes are connected (shown in the detail panel) */
+    note: text("note"),
   },
   (t) => [
     index("edges_source_idx").on(t.source),

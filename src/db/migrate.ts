@@ -46,12 +46,16 @@ export async function ensureSchema(db: Db): Promise<void> {
         id integer primary key generated always as identity,
         source text not null,
         target text not null,
-        type text not null
+        type text not null,
+        note text
       )
     `);
     await db.execute(sql`create index edges_source_idx on edges (source)`);
     await db.execute(sql`create index edges_target_idx on edges (target)`);
     await db.execute(sql`create index edges_type_idx on edges (type)`);
+  } else {
+    // column added after the initial release
+    await db.execute(sql`alter table edges add column if not exists note text`);
   }
 
   if (!names.has("user_node_state")) {

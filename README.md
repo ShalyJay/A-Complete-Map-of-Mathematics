@@ -2,7 +2,7 @@
 
 An explorable knowledge graph of mathematics — grand branches down to theorems — built from MSC 2020, Wikidata, and Wikipedia. Mark personal mastery, and upload papers/exams to see coverage as a heatmap.
 
-The map is a ring of 8 large branch bubbles with labels inside. Clicking a branch **pops it out of the ring** and fans its fields across the free space; each deeper level (field → subfield → topic) fans further outward, and only one chain is open at a time so the selected section always has room. Within a section, **axioms hug the inner arc** (foundations point toward the center), theorems fan outward by derivation depth, and conjectures sit on the outermost row. Hover a theorem to trace its derivation lineage; selecting one reveals its full chain back to the axioms — chain members from other branches appear on inner ghost rings, axioms nearest the center, so cross-branch dependencies read as chords.
+The map is a ring of 8 large branch bubbles with labels inside (branches that wrap a single MSC field, like Number Theory (11-XX) and Discrete Mathematics (05-XX), show the MSC code right on the branch bubble). Clicking a branch **pops it out of the ring** and fans its fields across the free space; each deeper level (field → subfield → topic) fans further outward. Several branches can be open at once — each fan is clamped so it never invades its expanded neighbor's arc. Within a section, **axioms hug the inner arc** (foundations point toward the center), theorems fan outward by derivation depth, and conjectures sit on the outermost row. Derivation arrows are drawn **above** the bubbles. Hover a theorem to trace its lineage; clicking one **pins** the full chain back to the axioms (it stays lit when the mouse moves away) — chain members from other branches appear on inner ghost rings, axioms nearest the center, so cross-branch dependencies read as chords.
 
 Physics and computer science are planned future additions and are deliberately excluded from the mathematics map.
 
@@ -75,9 +75,14 @@ Two methods, selectable in the upload form:
 
 ## Map controls
 
-- Click a bubble to expand it: it pops out of its ring and its children fan out with room to breathe (one open chain at a time)
+- Click a bubble to expand it: it pops out of its ring and its children fan out with room to breathe; multiple branches can be open at once
+- The selected bubble gets a bright ring + amber halo
 - Hover a theorem to trace its derivation lineage; everything else dims
-- Selecting a theorem reveals its dependency chain back to the axioms, even across collapsed branches
-- Search jumps the camera and opens the ancestry path
+- Clicking a theorem pins its chain — arrows and dimming persist until you click elsewhere
+- Derivation chains reach back to the axioms, even across collapsed branches
+- Search jumps the camera and opens the ancestry path; tag chips filter by kind (axioms, theorems, lemmas, inequalities, conjectures, topics) and by branch — pick a tag with no query to browse everything under it
+- Collapsed sections still show their interdependencies: hidden dependency endpoints roll up to the nearest visible bubble as aggregated orange arcs (thicker = more underlying links)
+- Every node has a description: MSC topics without a scope note or Wikipedia page get one synthesized from their position, subtopics, and attached results
+- Every connection is explained: the detail card lists each link under "Builds on" / "Leads to" / "See also" with a one-line note saying *why* the two results are connected (curated proof sketches for the derivation edges, synthesized text otherwise)
 - **Mastery** overlay (signed in): green mastered → red problem areas → gray unexplored
 - **Documents**: upload PDF/text → keyword or AI analysis tags MSC areas → orange coverage heatmap

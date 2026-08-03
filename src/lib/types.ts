@@ -7,6 +7,8 @@ export interface GraphNodeLite {
   depth: number;
   parentId: string | null;
   childCount: number;
+  /** secondary line rendered under the title inside big bubbles (e.g. MSC code) */
+  sublabel?: string;
 }
 
 export interface GraphEdgeLite {
@@ -39,7 +41,9 @@ export interface NodeDetail {
     id: string;
     title: string;
     type: string;
-    relation: string; // child | parent | see-also | related
+    relation: string; // builds-on | leads-to | child | parent | see-also | related
+    /** why the two nodes are connected (curated or synthesized) */
+    note: string | null;
   }[];
 }
 

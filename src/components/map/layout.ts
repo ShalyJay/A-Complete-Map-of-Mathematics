@@ -6,8 +6,8 @@ import type { NodeIndex } from "./graphStore";
  * The 8 grand branches sit as large labeled bubbles on a ring around the
  * center. Expanding a node "pops" it slightly outward and fans its children
  * across a generous arc one ring further out, so the open section fills the
- * free space. Only one chain is expanded at a time (accordion, enforced in
- * AppShell), which is what buys the breathing room.
+ * free space. Several sections can be open at once: each expanded node's fan
+ * is clamped so it doesn't invade the arc of its nearest expanded sibling.
  *
  * Derivation still reads center-outward:
  *   - within an expanded section, axioms sit on the arc *inside* their
@@ -119,7 +119,13 @@ export function computeLayout(
     return level !== undefined ? level : 200;
   };
 
-  const place = (id: string, angle: number, radius: number, depth: number) => {
+  const place = (
+    id: string,
+    angle: number,
+    radius: number,
+    depth: number,
+    allowedSpan: number,
+  ) => {
     const popped = expanded.has(id);
     const r = popped ? radius + RADII.pop : radius;
     positions.set(id, { x: r * Math.cos(angle), y: r * Math.sin(angle) });
@@ -128,7 +134,7 @@ export function computeLayout(
     const kids = index.children.get(id) ?? [];
     if (kids.length === 0) return;
     const childRing = RADII.childRing[Math.min(depth, RADII.childRing.length - 1)];
-    const span = CHILD_SPAN[Math.min(depth, CHILD_SPAN.length - 1)];
+    const span = Math.min(CHILD_SPAN[Math.min(depth, CHILD_SPAN.length - 1)], allowedSpan);
 
     // taxonomy children (fields/subfields/topics) vs leaf entities
     const taxonomy = kids.filter((k) => (index.byId.get(k)?.depth ?? 4) < 4);
@@ -144,13 +150,30 @@ export function computeLayout(
       arcRows(positions, axioms, angle, span * 0.7, childRing - 150, 70, 60, -1);
     }
 
-    // taxonomy bubbles on the main children ring; recurse into the expanded one
+    // taxonomy bubbles on the main children ring; recurse into expanded ones,
+    // clamping each fan so it can't invade an expanded sibling's arc
     if (taxonomy.length > 0) {
       arcRows(positions, taxonomy, angle, span, childRing, SPACING[childDepth], ROW_GAP[childDepth]);
-      for (const t of taxonomy) {
-        if (!expanded.has(t)) continue;
-        const p = positions.get(t)!;
-        place(t, Math.atan2(p.y, p.x), Math.hypot(p.x, p.y), depth + 1);
+      const open = taxonomy
+        .filter((t) => expanded.has(t))
+        .map((t) => {
+          const p = positions.get(t)!;
+          return { id: t, angle: Math.atan2(p.y, p.x), radius: Math.hypot(p.x, p.y) };
+        })
+        .sort((a, b) => a.angle - b.angle);
+      for (let i = 0; i < open.length; i++) {
+        const o = open[i];
+        let gap = Infinity;
+        if (open.length > 1) {
+          const prev = open[(i - 1 + open.length) % open.length];
+          const next = open[(i + 1) % open.length];
+          const d = (a: number, b: number) => {
+            let x = Math.abs(a - b) % (2 * Math.PI);
+            return x > Math.PI ? 2 * Math.PI - x : x;
+          };
+          gap = Math.min(d(o.angle, prev.angle), d(o.angle, next.angle));
+        }
+        place(o.id, o.angle, o.radius, depth + 1, Math.min(span, 0.9 * gap));
       }
     }
 
@@ -164,8 +187,25 @@ export function computeLayout(
     }
   };
 
+  // branches: clamp each expanded fan by the gap to its nearest expanded
+  // neighbor on the ring, so several branches can be open at once
+  const openBranches = branches.filter((id) => expanded.has(id));
+  const branchSpan = new Map<string, number>();
+  for (const id of openBranches) {
+    let gap = Infinity;
+    if (openBranches.length > 1) {
+      const a = branchAngle.get(id)!;
+      for (const other of openBranches) {
+        if (other === id) continue;
+        let d = Math.abs(branchAngle.get(other)! - a) % (2 * Math.PI);
+        if (d > Math.PI) d = 2 * Math.PI - d;
+        gap = Math.min(gap, d);
+      }
+    }
+    branchSpan.set(id, Math.min(CHILD_SPAN[0], 0.9 * gap));
+  }
   for (const id of branches) {
-    place(id, branchAngle.get(id)!, RADII.ring, 0);
+    place(id, branchAngle.get(id)!, RADII.ring, 0, branchSpan.get(id) ?? CHILD_SPAN[0]);
   }
 
   // ---- ghost rings for revealed dependency-chain members --------------------
