@@ -40,6 +40,67 @@ export interface LayoutResult {
   levels: Map<string, number>;
 }
 
+/**
+ * Ring order for the grand branches.
+ *
+ * Two goals: (1) big subjects must not sit next to other big subjects — an
+ * expanded Algebra next to an expanded Analysis crowds both fans; (2) among
+ * the allowed spots, keep strongly inter-dependent branches close so the
+ * cross-branch derivation chords stay short. We alternate big/small around
+ * the ring, greedily picking from the required pool the branch with the most
+ * dependency links to the one placed before it.
+ */
+export function orderBranches(index: NodeIndex): string[] {
+  const branches = [...index.byId.values()]
+    .filter((n) => n.depth === 0)
+    .map((n) => n.id)
+    .sort();
+  if (branches.length <= 2) return branches;
+
+  const size = new Map<string, number>(branches.map((b) => [b, 0]));
+  for (const b of index.branchOf.values()) {
+    if (size.has(b)) size.set(b, size.get(b)! + 1);
+  }
+
+  // cross-branch dependency counts
+  const linkKey = (a: string, b: string) => (a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`);
+  const links = new Map<string, number>();
+  for (const [dep, prereqs] of index.depsOf) {
+    const bd = index.branchOf.get(dep);
+    if (!bd) continue;
+    for (const p of prereqs) {
+      const bp = index.branchOf.get(p);
+      if (!bp || bp === bd) continue;
+      const k = linkKey(bd, bp);
+      links.set(k, (links.get(k) ?? 0) + 1);
+    }
+  }
+
+  const bySize = [...branches].sort((a, b) => size.get(b)! - size.get(a)!);
+  const half = Math.ceil(bySize.length / 2);
+  const pools = [bySize.slice(0, half), bySize.slice(half)]; // [big, small]
+
+  const order: string[] = [pools[0].shift()!];
+  let poolIdx = 1;
+  while (pools[0].length + pools[1].length > 0) {
+    let pool = pools[poolIdx];
+    if (pool.length === 0) pool = pools[1 - poolIdx];
+    const last = order[order.length - 1];
+    let best = 0;
+    let bestScore = -1;
+    for (let i = 0; i < pool.length; i++) {
+      const s = links.get(linkKey(last, pool[i])) ?? 0;
+      if (s > bestScore) {
+        bestScore = s;
+        best = i;
+      }
+    }
+    order.push(pool.splice(best, 1)[0]);
+    poolIdx = 1 - poolIdx;
+  }
+  return order;
+}
+
 /** derivation levels in the depends-on DAG (axioms = 0) */
 export function computeLevels(index: NodeIndex): Map<string, number> {
   const levels = new Map<string, number>();
@@ -101,10 +162,7 @@ export function computeLayout(
 ): Map<string, { x: number; y: number }> {
   const positions = new Map<string, { x: number; y: number }>();
 
-  const branches = [...index.byId.values()]
-    .filter((n) => n.depth === 0)
-    .map((n) => n.id)
-    .sort();
+  const branches = orderBranches(index);
   const sector = (2 * Math.PI) / Math.max(branches.length, 1);
   const branchAngle = new Map<string, number>();
   branches.forEach((id, i) => branchAngle.set(id, -Math.PI / 2 + i * sector));

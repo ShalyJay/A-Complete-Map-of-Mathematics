@@ -1,4 +1,5 @@
 import type { NodeIndex } from "./graphStore";
+import { orderBranches } from "./layout";
 
 /**
  * Expansion-driven 3D layout.
@@ -95,10 +96,7 @@ export function computeLayout3D(
 ): Map<string, Vec3> {
   const positions = new Map<string, Vec3>();
 
-  const branches = [...index.byId.values()]
-    .filter((n) => n.depth === 0)
-    .map((n) => n.id)
-    .sort();
+  const branches = orderBranches(index);
   const sector = (2 * Math.PI) / Math.max(branches.length, 1);
   const branchDir = new Map<string, Vec3>();
   branches.forEach((id, i) => {
@@ -114,6 +112,64 @@ export function computeLayout3D(
     if (n.type === "conjecture") return 400;
     const level = levels.get(id);
     return level !== undefined ? level : 200;
+  };
+
+  /**
+   * Direction a node "wants" to sit in to keep its derivation chords short:
+   * the mean direction of its dependency partners. Partners not placed yet
+   * are approximated by their branch's spot on the ring, so results with
+   * cross-branch links drift toward the side facing the other branch.
+   */
+  const partnerPull = (id: string): Vec3 | null => {
+    let sx = 0;
+    let sy = 0;
+    let sz = 0;
+    let n = 0;
+    const partners = [
+      ...(index.depsOf.get(id) ?? []),
+      ...(index.dependentsOf.get(id) ?? []),
+    ];
+    for (const p of partners) {
+      let pos = positions.get(p);
+      if (!pos) {
+        const bd = branchDir.get(index.branchOf.get(p) ?? "");
+        if (bd) pos = scale(bd, RADII3.ring);
+      }
+      if (!pos) continue;
+      sx += pos.x;
+      sy += pos.y;
+      sz += pos.z;
+      n++;
+    }
+    if (n === 0) return null;
+    const len = Math.hypot(sx, sy, sz);
+    return len < 1e-6 ? null : { x: sx / len, y: sy / len, z: sz / len };
+  };
+
+  /**
+   * Hand out cap slots so each item lands as close as possible to the
+   * direction its dependency partners pull it toward (greedy assignment;
+   * items with a pull pick first).
+   */
+  const assignSlots = (items: string[], dirs: Vec3[], radius: number) => {
+    const free = dirs.map((_, i) => i);
+    const pulled = items.map((id) => ({ id, pull: partnerPull(id) }));
+    pulled.sort((a, b) => (b.pull ? 1 : 0) - (a.pull ? 1 : 0));
+    for (const { id, pull } of pulled) {
+      let bestIdx = 0;
+      if (pull) {
+        let bestScore = -Infinity;
+        for (let j = 0; j < free.length; j++) {
+          const s = dot(dirs[free[j]], pull);
+          if (s > bestScore) {
+            bestScore = s;
+            bestIdx = j;
+          }
+        }
+      }
+      const slot = free.splice(bestIdx, 1)[0];
+      positions.set(id, scale(dirs[slot], radius));
+    }
   };
 
   const place = (id: string, dir: Vec3, radius: number, depth: number, allowedCap: number) => {
@@ -136,8 +192,7 @@ export function computeLayout3D(
     // axioms hug an inner shell — foundations point toward the origin
     if (axioms.length > 0) {
       const dirs = capDirections(dir, cap * 0.55, axioms.length);
-      const rIn = Math.max(90, shell - 180);
-      axioms.forEach((a, i) => positions.set(a, scale(dirs[i], rIn)));
+      assignSlots(axioms, dirs, Math.max(90, shell - 180));
     }
 
     // taxonomy bubbles on the main children shell; recurse into expanded
@@ -169,7 +224,9 @@ export function computeLayout3D(
         const per = Math.max(8, Math.floor(capArea / (ENTITY_SPACING * ENTITY_SPACING)));
         const batch = entities.slice(idx, idx + per);
         const dirs = capDirections(dir, cap, batch.length);
-        batch.forEach((e, i) => positions.set(e, scale(dirs[i], r2)));
+        // dependency-aware slots: connected results gravitate toward each
+        // other, so the orange chords stay as short as the shells allow
+        assignSlots(batch, dirs, r2);
         idx += per;
         layer++;
       }

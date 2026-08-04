@@ -513,6 +513,22 @@ function Scene({
     gl.domElement.style.cursor = hoverId ? "pointer" : "default";
   }, [hoverId, gl]);
 
+  // hold Shift to pan with the left button (right-drag always pans)
+  useEffect(() => {
+    const setPan = (pan: boolean) => {
+      const ctrl = controlsRef.current;
+      if (ctrl) ctrl.mouseButtons.LEFT = pan ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+    };
+    const down = (e: KeyboardEvent) => e.key === "Shift" && setPan(true);
+    const up = (e: KeyboardEvent) => e.key === "Shift" && setPan(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
   const traceActive = trace !== null;
   const inTrace = useCallback(
     (id: string) => !!trace && (id === trace.id || trace.chain.has(id)),
@@ -572,6 +588,8 @@ function Scene({
         enableDamping
         dampingFactor={0.08}
         rotateSpeed={0.55}
+        panSpeed={1.1}
+        screenSpacePanning
         minDistance={120}
         maxDistance={4200}
         onStart={() => (desired.current.active = false)}
