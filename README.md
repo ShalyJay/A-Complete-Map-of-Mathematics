@@ -84,5 +84,6 @@ Two methods, selectable in the upload form:
 - Collapsed sections still show their interdependencies: hidden dependency endpoints roll up to the nearest visible bubble as aggregated orange arcs (thicker = more underlying links)
 - Every node has a description: MSC topics without a scope note or Wikipedia page get one synthesized from their position, subtopics, and attached results
 - Every connection is explained: the detail card lists each link under "Builds on" / "Leads to" / "See also" with a one-line note saying *why* the two results are connected (curated proof sketches for the derivation edges, synthesized text otherwise)
+- **3D mode (default)**: the map renders as a navigable space (three.js / react-three-fiber) — drag to rotate, scroll to zoom, right-drag to pan. Expanding a bubble fans its children across a spherical cap around its outward direction, so open sections spread into the z axis too. Axioms sit on inner shells, theorems on outer shells by derivation level, and dependency chords arc through the space. The 2D radial map is one toggle away in the top-right corner
 - **Mastery** overlay (signed in): green mastered → red problem areas → gray unexplored
 - **Documents**: upload PDF/text → keyword or AI analysis tags MSC areas → orange coverage heatmap

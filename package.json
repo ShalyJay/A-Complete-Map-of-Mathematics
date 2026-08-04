@@ -19,6 +19,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
     "@electric-sql/pglite": "^0.5.4",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.7.0",
     "@sigma/edge-curve": "^3.1.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.0",
@@ -34,6 +36,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "sigma": "^3.0.3",
+    "three": "^0.185.1",
     "unpdf": "^1.8.0",
     "zod": "^4.4.3"
   },

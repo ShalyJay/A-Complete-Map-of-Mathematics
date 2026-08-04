@@ -20,6 +20,7 @@ import DocumentsPanel from "./DocumentsPanel";
 import { GRAND_BRANCHES } from "@/lib/branches";
 
 const MathMap = dynamic(() => import("./map/MathMap"), { ssr: false });
+const MathMap3D = dynamic(() => import("./map/MathMap3D"), { ssr: false });
 
 export default function AppShell() {
   const [payload, setPayload] = useState<GraphPayload | null>(null);
@@ -32,6 +33,7 @@ export default function AppShell() {
   const [overlay, setOverlay] = useState<OverlayMode>("none");
   const [docNodes, setDocNodes] = useState<DocumentNodeLite[] | null>(null);
   const [docsOpen, setDocsOpen] = useState(false);
+  const [is3D, setIs3D] = useState(true);
   const nonce = useRef(0);
 
   useEffect(() => {
@@ -184,7 +186,18 @@ export default function AppShell() {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden">
-      {graph && index && (
+      {graph && index && (is3D ? (
+        <MathMap3D
+          graph={graph}
+          index={index}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          expanded={expanded}
+          onToggleExpand={toggleExpand}
+          focus={focus}
+          overlayColors={overlayColors}
+        />
+      ) : (
         <MathMap
           graph={graph}
           index={index}
@@ -195,7 +208,7 @@ export default function AppShell() {
           focus={focus}
           overlayColors={overlayColors}
         />
-      )}
+      ))}
 
       {!payload && !error && (
         <div className="absolute inset-0 flex items-center justify-center">
@@ -223,6 +236,23 @@ export default function AppShell() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 2D / 3D view toggle */}
+          <div className="panel pointer-events-auto flex rounded-xl p-1 text-sm">
+            <button
+              onClick={() => setIs3D(true)}
+              className={`rounded-lg px-3 py-1.5 ${is3D ? "bg-slate-600/60 text-white" : "text-slate-400 hover:text-white"}`}
+              title="Navigable 3D space — drag to rotate, scroll to zoom"
+            >
+              3D
+            </button>
+            <button
+              onClick={() => setIs3D(false)}
+              className={`rounded-lg px-3 py-1.5 ${!is3D ? "bg-slate-600/60 text-white" : "text-slate-400 hover:text-white"}`}
+              title="Flat radial map"
+            >
+              2D
+            </button>
+          </div>
           {/* overlay toggles */}
           <div className="panel pointer-events-auto flex rounded-xl p-1 text-sm">
             <button
@@ -308,7 +338,9 @@ export default function AppShell() {
 
       {/* hint */}
       <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 text-xs text-slate-500">
-        Click to explore · click a theorem to pin its derivation chain · scroll to zoom
+        {is3D
+          ? "Drag to rotate · scroll to zoom · right-drag to pan · click bubbles to expand"
+          : "Click to explore · click a theorem to pin its derivation chain · scroll to zoom"}
       </div>
 
       {/* right side: detail panel or documents panel */}
