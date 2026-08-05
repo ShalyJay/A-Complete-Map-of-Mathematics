@@ -1,11 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { eq, inArray } from "drizzle-orm";
 import { getDb, schema, type Db } from "@/db";
+import { extractPhrases } from "@/lib/nlp/phrases";
+import { cosine, embedTexts, ensureNodeIndex } from "@/lib/nlp/embeddings";
 
 export interface Classification {
   /** MSC code (LLM path) — resolved to a node id when storing */
   code?: string;
-  /** Direct node id (keyword path) */
+  /** Direct node id (keyword / local path) */
   nodeId?: string;
   weight: number;
   rationale: string;
@@ -14,6 +16,10 @@ export interface Classification {
 export type AnalysisMethod = "keyword" | "llm";
 
 const MAX_DOC_CHARS = 60_000;
+/** Minimum cosine similarity to keep an embedding hit. */
+const SEM_FLOOR = 0.38;
+/** How many top embedding neighbors to keep before fusion. */
+const SEM_TOP_K = 25;
 
 // ---------------------------------------------------------------------------
 // Keyword matching (default — no API key required)
@@ -121,10 +127,24 @@ function phraseRegex(phrase: string): RegExp {
   return new RegExp(`\\b${source}\\b`, "g");
 }
 
+const LEVEL_BOOST: Record<string, number> = {
+  field: 0.7,
+  subfield: 1.0,
+  topic: 1.25,
+  theorem: 1.6,
+  axiom: 1.6,
+  conjecture: 1.6,
+  definition: 1.4,
+};
+
+function educationPenalty(id: string, title: string): number {
+  return /educational aspects|education of|^msc:97/i.test(`${title} ${id}`) ? 0.25 : 1;
+}
+
 /**
- * Lightweight offline classification: scan the document for occurrences of
- * node titles (MSC topics/subfields/fields + named theorems). Specific,
- * deeper matches score higher; the top matches become coverage weights.
+ * Local offline classification: compromise noun-phrase extraction + tiny
+ * MiniLM embeddings against the taxonomy (and named results). Replaces naive
+ * whole-document keyword scans that misfire on "prime" / "strings".
  */
 export async function classifyByKeywords(text: string): Promise<Classification[]> {
   const db = await getDb();
@@ -147,36 +167,54 @@ export async function classifyByKeywords(text: string): Promise<Classification[]
       ]),
     );
 
-  const doc = ` ${text.slice(0, MAX_DOC_CHARS).toLowerCase().replace(/\s+/g, " ")} `;
+  const clipped = text.slice(0, MAX_DOC_CHARS).replace(/\s+/g, " ");
+  const docLower = ` ${clipped.toLowerCase()} `;
+  const { phrases, counts } = extractPhrases(clipped);
 
-  const LEVEL_BOOST: Record<string, number> = {
-    field: 0.7,
-    subfield: 1.0,
-    topic: 1.25,
-    theorem: 1.6,
-    axiom: 1.6,
-    conjecture: 1.6,
-    definition: 1.4,
+  // ---- Lexical: match extracted phrases (and entity titles) against nodes ----
+  const lexical = new Map<string, { score: number; rationale: string; phrase: string }>();
+  const phraseList = phrases.length > 0 ? phrases : [];
+
+  const containsPhrase = (hay: string, needle: string): boolean => {
+    if (hay === needle) return true;
+    // Whole-phrase containment only (avoid "prime number" ⊂ "prime number theorem").
+    try {
+      return new RegExp(`(?:^|\\s)${escapeRegExp(needle)}(?:\\s|$)`).test(hay);
+    } catch {
+      return false;
+    }
   };
 
-  const hits: { nodeId: string; phrase: string; score: number; rationale: string }[] = [];
   for (const n of rows) {
     let bestScore = 0;
     let bestPhrase = "";
     let bestCount = 0;
-    for (const phrase of phrasesFor(n.title, n.type)) {
-      const count = (doc.match(phraseRegex(phrase)) ?? []).length;
-      if (count === 0) continue;
-      // longer phrases are more specific, diminishing returns on repeats
-      const specificity = 0.6 + Math.min(phrase.length / 14, 1.4);
-      // favor nodes whose title mostly IS the phrase (canonical matches)
-      const titleFit = 0.7 + 0.3 * Math.min(1, phrase.length / n.title.length);
-      let score =
-        (1 + Math.log2(count)) * specificity * titleFit * (LEVEL_BOOST[n.type] ?? 1);
-      // MSC 97 (mathematics education) mirrors every field's name — down-rank it
-      if (/educational aspects|education of|^msc:97/i.test(`${n.title} ${n.id}`)) {
-        score *= 0.25;
+    const candidates = phrasesFor(n.title, n.type);
+    for (const phrase of candidates) {
+      // Prefer counting inside extracted noun phrases (syntax-aware), fall
+      // back to whole-doc only for multiword / entity titles.
+      let count = 0;
+      for (const p of phraseList) {
+        if (containsPhrase(p, phrase)) count += counts.get(p) ?? 1;
       }
+      if (
+        count === 0 &&
+        (phrase.includes(" ") ||
+          ["theorem", "axiom", "conjecture", "definition"].includes(n.type))
+      ) {
+        count = (docLower.match(phraseRegex(phrase)) ?? []).length;
+      }
+      if (count === 0) continue;
+      // Single-word / short title fragments on education mirrors stay weak.
+      if (n.id.startsWith("msc:97") && phrase.split(/\s+/).length < 3) continue;
+      const specificity = 0.6 + Math.min(phrase.length / 14, 1.4);
+      const titleFit = 0.7 + 0.3 * Math.min(1, phrase.length / Math.max(n.title.length, 1));
+      const score =
+        (1 + Math.log2(count)) *
+        specificity *
+        titleFit *
+        (LEVEL_BOOST[n.type] ?? 1) *
+        educationPenalty(n.id, n.title);
       if (score > bestScore) {
         bestScore = score;
         bestPhrase = phrase;
@@ -184,20 +222,93 @@ export async function classifyByKeywords(text: string): Promise<Classification[]
       }
     }
     if (bestScore > 0) {
-      hits.push({
-        nodeId: n.id,
-        phrase: bestPhrase,
+      lexical.set(n.id, {
         score: bestScore,
-        rationale: `Matched "${bestPhrase}"${bestCount > 1 ? ` ×${bestCount}` : ""}`,
+        phrase: bestPhrase,
+        rationale: `Phrase "${bestPhrase}"${bestCount > 1 ? ` ×${bestCount}` : ""}`,
       });
     }
   }
 
-  hits.sort((a, b) => b.score - a.score);
-  // One phrase shouldn't scatter weight across many obscure topics: keep the
-  // 2 best nodes per matched phrase.
+  // ---- Semantic: embed phrases (+ short doc windows) vs field/subfield titles
+  // Named theorems stay lexical-only — MiniLM overfits short contest phrases
+  // onto famous theorem titles ("new string" → string theory).
+  const embedRows = rows.filter((r) => r.type === "field" || r.type === "subfield");
+  const index = await ensureNodeIndex(
+    embedRows.map((r) => ({ id: r.id, title: r.title })),
+  );
+  // Prefer multiword content phrases; skip scaffolding that confuses MiniLM.
+  const queryTexts = [
+    ...phraseList
+      .filter((p) => {
+        const words = p.split(/\s+/);
+        if (words.length < 2 || words.length > 10) return false;
+        if (/^(number of|value of|all |the following)/i.test(p)) return false;
+        return true;
+      })
+      .slice(0, 35),
+    // One document window: denser signal than isolated scraps.
+    clipped.slice(0, 900),
+  ].filter((t) => t.trim().length >= 12);
+
+  const queryVecs = await embedTexts(queryTexts);
+  const semantic = new Map<string, { score: number; rationale: string }>();
+  const typeById = new Map(rows.map((r) => [r.id, r]));
+
+  for (const [nodeId, entry] of Object.entries(index.nodes)) {
+    const row = typeById.get(nodeId);
+    if (!row) continue;
+    let best = 0;
+    let bestQuery = "";
+    for (let i = 0; i < queryVecs.length; i++) {
+      const sim = cosine(queryVecs[i]!, entry.vector);
+      if (sim > best) {
+        best = sim;
+        bestQuery = queryTexts[i]!.slice(0, 60);
+      }
+    }
+    if (best < SEM_FLOOR) continue;
+    const boosted =
+      ((best - SEM_FLOOR) / (1 - SEM_FLOOR)) *
+      (LEVEL_BOOST[row.type] ?? 1) *
+      educationPenalty(nodeId, row.title);
+    semantic.set(nodeId, {
+      score: boosted,
+      rationale: `Similar to "${bestQuery}${bestQuery.length >= 60 ? "…" : ""}" (${best.toFixed(2)})`,
+    });
+  }
+
+  // Keep only the strongest semantic neighbors to limit noise.
+  const semRanked = [...semantic.entries()]
+    .sort((a, b) => b[1].score - a[1].score)
+    .slice(0, SEM_TOP_K);
+  semantic.clear();
+  for (const [id, v] of semRanked) semantic.set(id, v);
+
+  // ---- Fuse ----
+  const ids = new Set([...lexical.keys(), ...semantic.keys()]);
+  const fused: { nodeId: string; score: number; rationale: string; phrase?: string }[] = [];
+  for (const id of ids) {
+    const lex = lexical.get(id);
+    const sem = semantic.get(id);
+    const lexScore = lex?.score ?? 0;
+    const semScore = sem?.score ?? 0;
+    // Normalize loosely: lexical scores are typically 1–8; semantic 0–1.5.
+    const score = 0.4 * Math.min(lexScore / 4, 1.5) + 0.6 * semScore;
+    if (score <= 0) continue;
+    const parts = [lex?.rationale, sem?.rationale].filter(Boolean);
+    fused.push({
+      nodeId: id,
+      score,
+      phrase: lex?.phrase,
+      rationale: parts.join("; "),
+    });
+  }
+
+  fused.sort((a, b) => b.score - a.score);
   const perPhrase = new Map<string, number>();
-  const deduped = hits.filter((h) => {
+  const deduped = fused.filter((h) => {
+    if (!h.phrase) return true;
     const seen = perPhrase.get(h.phrase) ?? 0;
     if (seen >= 2) return false;
     perPhrase.set(h.phrase, seen + 1);
@@ -205,7 +316,7 @@ export async function classifyByKeywords(text: string): Promise<Classification[]
   });
   const top = deduped.slice(0, 30);
   if (top.length === 0) return [];
-  const max = top[0].score;
+  const max = top[0]!.score;
   return top.map((h) => ({
     nodeId: h.nodeId,
     weight: Math.max(0.15, Math.min(1, h.score / max)),

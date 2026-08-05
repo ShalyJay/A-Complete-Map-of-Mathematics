@@ -63,7 +63,7 @@ Cached downloads live in `data/cache/` (gitignored).
 
 Two methods, selectable in the upload form:
 
-- **Keyword matching** (default) — scans the text for MSC topic titles and named theorems. Fast, offline, no API key.
+- **Local NLP** (default) — extracts noun phrases with [`compromise`](https://github.com/spencermountain/compromise), then ranks MSC nodes with a tiny local embedding model ([`Xenova/all-MiniLM-L6-v2`](https://huggingface.co/Xenova/all-MiniLM-L6-v2) via [`@xenova/transformers`](https://www.npmjs.com/package/@xenova/transformers)). Offline after the first ~23 MB model download into `.data/hf-cache/`; node vectors cache in `.data/cache/node-embeddings.json`.
 - **AI (Claude)** — semantic classification against the MSC taxonomy via the Anthropic API. Paste an API key in the form (used per-request, never stored) or set `ANTHROPIC_API_KEY` on the server.
 
 ## Optional: Supabase + Anthropic

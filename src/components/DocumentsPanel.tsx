@@ -195,7 +195,7 @@ export default function DocumentsPanel({
                   onClick={() => setMethod("keyword")}
                   className={`flex-1 rounded-md px-3 py-1.5 ${method === "keyword" ? "bg-slate-600/60 text-white" : "text-slate-400 hover:text-white"}`}
                 >
-                  Keyword matching
+                  Local NLP
                 </button>
                 <button
                   type="button"
@@ -207,7 +207,7 @@ export default function DocumentsPanel({
               </div>
               <p className="mt-1.5 text-xs leading-snug text-slate-500">
                 {method === "keyword"
-                  ? "Fast and offline: scans the text for topic and theorem names. No API key needed."
+                  ? "Offline: noun-phrase parsing + tiny local embeddings against the map. First run downloads a ~23 MB model."
                   : "Deeper semantic analysis via the Anthropic API."}
               </p>
               {method === "llm" && !llmConfigured && (
