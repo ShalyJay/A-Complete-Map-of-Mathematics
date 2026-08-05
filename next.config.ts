@@ -15,6 +15,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname),
   },
+  // Ship the static graph export with serverless routes (Vercel has no PGlite).
+  outputFileTracingIncludes: {
+    "/api/**/*": ["./data/static-graph.json"],
+  },
   experimental: {
     // TypeScript 7 doesn't expose the compiler API Next expects yet.
     useTypeScriptCli: true,

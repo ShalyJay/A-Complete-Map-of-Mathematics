@@ -36,8 +36,17 @@ export default function AppShell() {
 
   useEffect(() => {
     fetch("/api/graph")
-      .then((r) => {
-        if (!r.ok) throw new Error(`API error ${r.status}`);
+      .then(async (r) => {
+        if (!r.ok) {
+          let detail = "";
+          try {
+            const body = (await r.json()) as { error?: string };
+            if (body.error) detail = `: ${body.error}`;
+          } catch {
+            /* ignore */
+          }
+          throw new Error(`API error ${r.status}${detail}`);
+        }
         return r.json();
       })
       .then((p: GraphPayload) => setPayload(collapseSingleFieldBranches(p)))
@@ -140,10 +149,14 @@ export default function AppShell() {
         <div className="panel max-w-md rounded-2xl p-6 text-sm text-slate-300">
           <p className="mb-2 font-semibold text-white">Couldn&apos;t load the map</p>
           <p className="mb-3 text-slate-400">{error}</p>
-          <p>
-            Make sure the graph is seeded: run{" "}
+          <p className="text-slate-400">
+            Locally: run{" "}
             <code className="rounded bg-slate-800 px-1.5 py-0.5">npm run ingest:all</code>{" "}
-            and reload.
+            then reload. On Vercel: commit{" "}
+            <code className="rounded bg-slate-800 px-1.5 py-0.5">data/static-graph.json</code>{" "}
+            (from{" "}
+            <code className="rounded bg-slate-800 px-1.5 py-0.5">npm run export:graph</code>
+            ) and redeploy.
           </p>
         </div>
       </div>

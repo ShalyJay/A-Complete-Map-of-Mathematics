@@ -14,7 +14,8 @@
     "ingest:wikidata": "node --import tsx scripts/ingest-wikidata.ts",
     "ingest:wikipedia": "node --import tsx scripts/ingest-wikipedia.ts",
     "ingest:deps": "node --import tsx scripts/ingest-dependencies.ts",
-    "ingest:all": "node --import tsx scripts/ingest-msc.ts && node --import tsx scripts/ingest-wikidata.ts && node --import tsx scripts/ingest-dependencies.ts && node --import tsx scripts/ingest-wikipedia.ts"
+    "ingest:all": "node --import tsx scripts/ingest-msc.ts && node --import tsx scripts/ingest-wikidata.ts && node --import tsx scripts/ingest-dependencies.ts && node --import tsx scripts/ingest-wikipedia.ts",
+    "export:graph": "node --import tsx scripts/export-static-graph.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

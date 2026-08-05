@@ -1,8 +1,75 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { inArray } from "drizzle-orm";
-import { getDb, schema, type Db } from "@/db";
+import { getDb, schema } from "@/db";
+import { shouldUseStaticGraph } from "@/lib/graphAccess";
+import { hasStaticGraph, staticAllNodes } from "@/lib/staticGraph";
 import { extractPhrases } from "@/lib/nlp/phrases";
 import { cosine, embedTexts, ensureNodeIndex } from "@/lib/nlp/embeddings";
+
+type NodeRow = {
+  id: string;
+  title: string;
+  type: string;
+  mscCode?: string | null;
+  parentId?: string | null;
+};
+
+async function loadNodesByTypes(types: string[]): Promise<NodeRow[]> {
+  if (shouldUseStaticGraph() || (!(await canUseDb()) && hasStaticGraph())) {
+    return staticAllNodes()
+      .filter((n) => types.includes(n.type))
+      .map((n) => ({
+        id: n.id,
+        title: n.title,
+        type: n.type,
+        mscCode: n.mscCode,
+        parentId: n.parentId,
+      }));
+  }
+  const db = await getDb();
+  return db
+    .select({
+      id: schema.nodes.id,
+      title: schema.nodes.title,
+      type: schema.nodes.type,
+      mscCode: schema.nodes.mscCode,
+      parentId: schema.nodes.parentId,
+    })
+    .from(schema.nodes)
+    .where(inArray(schema.nodes.type, types));
+}
+
+async function loadAllNodesLite(): Promise<NodeRow[]> {
+  if (shouldUseStaticGraph() || (!(await canUseDb()) && hasStaticGraph())) {
+    return staticAllNodes().map((n) => ({
+      id: n.id,
+      title: n.title,
+      type: n.type,
+      mscCode: n.mscCode,
+      parentId: n.parentId,
+    }));
+  }
+  const db = await getDb();
+  return db
+    .select({
+      id: schema.nodes.id,
+      title: schema.nodes.title,
+      type: schema.nodes.type,
+      mscCode: schema.nodes.mscCode,
+      parentId: schema.nodes.parentId,
+    })
+    .from(schema.nodes);
+}
+
+async function canUseDb(): Promise<boolean> {
+  if (shouldUseStaticGraph()) return false;
+  try {
+    await getDb();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface Classification {
   /** MSC code (LLM path) — resolved to a node id when storing */
@@ -147,25 +214,15 @@ function educationPenalty(id: string, title: string): number {
  * whole-document keyword scans that misfire on "prime" / "strings".
  */
 export async function classifyByKeywords(text: string): Promise<Classification[]> {
-  const db = await getDb();
-  const rows = await db
-    .select({
-      id: schema.nodes.id,
-      title: schema.nodes.title,
-      type: schema.nodes.type,
-    })
-    .from(schema.nodes)
-    .where(
-      inArray(schema.nodes.type, [
-        "field",
-        "subfield",
-        "topic",
-        "theorem",
-        "axiom",
-        "conjecture",
-        "definition",
-      ]),
-    );
+  const rows = await loadNodesByTypes([
+    "field",
+    "subfield",
+    "topic",
+    "theorem",
+    "axiom",
+    "conjecture",
+    "definition",
+  ]);
 
   const clipped = text.slice(0, MAX_DOC_CHARS).replace(/\s+/g, " ");
   const docLower = ` ${clipped.toLowerCase()} `;
@@ -329,16 +386,9 @@ export async function classifyByKeywords(text: string): Promise<Classification[]
 // ---------------------------------------------------------------------------
 
 /** Taxonomy prompt: all MSC fields + subfields (~600 lines). */
-async function buildTaxonomy(db: Db): Promise<string> {
-  const rows = await db
-    .select({
-      mscCode: schema.nodes.mscCode,
-      title: schema.nodes.title,
-      type: schema.nodes.type,
-    })
-    .from(schema.nodes)
-    .where(inArray(schema.nodes.type, ["field", "subfield"]));
-  rows.sort((a, b) => (a.mscCode! < b.mscCode! ? -1 : 1));
+async function buildTaxonomy(): Promise<string> {
+  const rows = await loadNodesByTypes(["field", "subfield"]);
+  rows.sort((a, b) => ((a.mscCode ?? "") < (b.mscCode ?? "") ? -1 : 1));
   return rows
     .map((r) => `${r.mscCode} ${r.type === "field" ? "" : "  "}${r.title}`)
     .join("\n");
@@ -361,8 +411,7 @@ export async function classifyDocument(
     );
   }
   const client = new Anthropic({ apiKey });
-  const db = await getDb();
-  const taxonomy = await buildTaxonomy(db);
+  const taxonomy = await buildTaxonomy();
   const clipped =
     text.length > MAX_DOC_CHARS ? `${text.slice(0, MAX_DOC_CHARS)}\n[...truncated]` : text;
 
@@ -433,19 +482,12 @@ export interface ResolvedCoverage {
 export async function resolveClassifications(
   classifications: Classification[],
 ): Promise<ResolvedCoverage> {
-  const db = await getDb();
-  const allNodes = await db
-    .select({
-      id: schema.nodes.id,
-      mscCode: schema.nodes.mscCode,
-      parentId: schema.nodes.parentId,
-      title: schema.nodes.title,
-      type: schema.nodes.type,
-    })
-    .from(schema.nodes);
+  const allNodes = await loadAllNodesLite();
   const byId = new Map(allNodes.map((n) => [n.id, n]));
-  const byCode = new Map(allNodes.filter((n) => n.mscCode).map((n) => [n.mscCode!, n]));
-  const parentOf = new Map(allNodes.map((n) => [n.id, n.parentId]));
+  const byCode = new Map(
+    allNodes.filter((n) => n.mscCode).map((n) => [n.mscCode!, n]),
+  );
+  const parentOf = new Map(allNodes.map((n) => [n.id, n.parentId ?? null]));
 
   const direct = new Map<string, { weight: number; rationale: string }>();
   for (const c of classifications) {
@@ -496,7 +538,7 @@ export async function resolveClassifications(
         rationale: v.rationale,
         title: n.title,
         type: n.type,
-        mscCode: n.mscCode,
+        mscCode: n.mscCode ?? null,
       };
     })
     .sort((a, b) => b.weight - a.weight);

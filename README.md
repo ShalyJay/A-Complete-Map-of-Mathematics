@@ -12,12 +12,23 @@ Computer science (MSC 68), information theory (94), and mathematical physics (70
 npm install
 npm run db:ensure        # create local PGlite graph tables
 npm run ingest:all       # MSC + Wikidata + Wikipedia (~a few minutes; Wikidata needs network)
+npm run export:graph     # write data/static-graph.json (needed for Vercel)
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
 Copy `.env.example` to `.env.local` only if you want a server-side Anthropic key for AI document analysis.
+
+## Deploy on Vercel
+
+Vercel serverless cannot use the local PGlite database (`.data/` is gitignored). Serve the map from a committed static export instead:
+
+1. Locally after ingest: `npm run export:graph`
+2. Commit `data/static-graph.json` (not under `data/cache/`, so it is tracked)
+3. Push and redeploy
+
+On Vercel the API reads that file automatically (`VERCEL=1`). Alternatives: set `DATABASE_URL` to a hosted Postgres with the graph seeded, or set `USE_STATIC_GRAPH=1` to force the static path locally.
 
 ## Run with Docker
 
