@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { eq, inArray } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { getDb, schema, type Db } from "@/db";
 import { extractPhrases } from "@/lib/nlp/phrases";
 import { cosine, embedTexts, ensureNodeIndex } from "@/lib/nlp/embeddings";
@@ -406,21 +406,41 @@ Rules:
 // Storage + weight propagation (shared by both methods)
 // ---------------------------------------------------------------------------
 
+export interface ResolvedCoverage {
+  nodes: {
+    nodeId: string;
+    weight: number;
+    rationale: string | null;
+    direct: boolean;
+  }[];
+  coverage: {
+    nodeId: string;
+    weight: number;
+    rationale: string | null;
+    title: string;
+    type: string;
+    mscCode: string | null;
+  }[];
+  directCount: number;
+}
+
 /**
- * Resolve classifications to node ids, propagate weights up the tree
- * (a hit on 11A41 lights up 11Axx, 11-XX and Number Theory), and store
- * everything in document_nodes.
+ * Resolve classifications to node ids and propagate weights up the tree
+ * (a hit on 11A41 lights up 11Axx, 11-XX and Number Theory). Results are
+ * returned for the client to persist in localStorage — nothing is written
+ * to the graph database.
  */
-export async function storeClassifications(
-  documentId: string,
+export async function resolveClassifications(
   classifications: Classification[],
-): Promise<number> {
+): Promise<ResolvedCoverage> {
   const db = await getDb();
   const allNodes = await db
     .select({
       id: schema.nodes.id,
       mscCode: schema.nodes.mscCode,
       parentId: schema.nodes.parentId,
+      title: schema.nodes.title,
+      type: schema.nodes.type,
     })
     .from(schema.nodes);
   const byId = new Map(allNodes.map((n) => [n.id, n]));
@@ -443,7 +463,6 @@ export async function storeClassifications(
     }
   }
 
-  // propagate up: ancestor weight = max(descendant weight) * 0.92 per level
   const all = new Map<string, { weight: number; rationale: string | null; direct: boolean }>();
   for (const [id, v] of direct) {
     all.set(id, { weight: v.weight, rationale: v.rationale, direct: true });
@@ -461,19 +480,26 @@ export async function storeClassifications(
     }
   }
 
-  await db
-    .delete(schema.documentNodes)
-    .where(eq(schema.documentNodes.documentId, documentId));
-  if (all.size > 0) {
-    await db.insert(schema.documentNodes).values(
-      [...all.entries()].map(([nodeId, v]) => ({
-        documentId,
+  const nodes = [...all.entries()].map(([nodeId, v]) => ({
+    nodeId,
+    weight: v.weight,
+    rationale: v.rationale,
+    direct: v.direct,
+  }));
+
+  const coverage = [...direct.entries()]
+    .map(([nodeId, v]) => {
+      const n = byId.get(nodeId)!;
+      return {
         nodeId,
         weight: v.weight,
         rationale: v.rationale,
-        direct: v.direct,
-      })),
-    );
-  }
-  return direct.size;
+        title: n.title,
+        type: n.type,
+        mscCode: n.mscCode,
+      };
+    })
+    .sort((a, b) => b.weight - a.weight);
+
+  return { nodes, coverage, directCount: direct.size };
 }

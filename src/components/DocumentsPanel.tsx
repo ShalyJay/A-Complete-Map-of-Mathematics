@@ -1,19 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { DocumentLite } from "@/lib/types";
-
-interface CoverageRow {
-  nodeId: string;
-  weight: number;
-  rationale: string | null;
-  title: string;
-  type: string;
-  mscCode: string | null;
-}
+import {
+  deleteDocument,
+  loadDocuments,
+  newDocumentId,
+  saveDocument,
+  type LocalDocument,
+} from "@/lib/localStore";
 
 interface Props {
-  signedIn: boolean;
   activeDocumentId: string | null;
   onShowHeatmap: (documentId: string | null) => void;
   onClose: () => void;
@@ -28,52 +24,36 @@ const KINDS = [
 ] as const;
 
 export default function DocumentsPanel({
-  signedIn,
   activeDocumentId,
   onShowHeatmap,
   onClose,
   onNavigate,
 }: Props) {
-  const [docs, setDocs] = useState<DocumentLite[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [docs, setDocs] = useState<LocalDocument[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState<(typeof KINDS)[number]["value"]>("exam");
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [coverage, setCoverage] = useState<CoverageRow[] | null>(null);
   const [mode, setMode] = useState<"list" | "upload">("list");
   const [method, setMethod] = useState<"keyword" | "llm">("keyword");
   const [apiKey, setApiKey] = useState("");
   const [llmConfigured, setLlmConfigured] = useState(false);
 
   const refresh = useCallback(() => {
-    setLoading(true);
-    fetch("/api/documents")
-      .then((r) => r.json())
-      .then((d) => {
-        setDocs(d.documents ?? []);
-        setLlmConfigured(!!d.llmConfigured);
-      })
-      .catch(() => setDocs([]))
-      .finally(() => setLoading(false));
+    setDocs(loadDocuments());
   }, []);
 
   useEffect(() => {
     refresh();
-  }, [refresh, signedIn]);
-
-  useEffect(() => {
-    if (!activeDocumentId) {
-      setCoverage(null);
-      return;
-    }
-    fetch(`/api/documents/${activeDocumentId}`)
+    fetch("/api/analyze")
       .then((r) => r.json())
-      .then((d) => setCoverage(d.coverage ?? []))
-      .catch(() => setCoverage([]));
-  }, [activeDocumentId]);
+      .then((d) => setLlmConfigured(!!d.llmConfigured))
+      .catch(() => setLlmConfigured(false));
+  }, [refresh]);
+
+  const active = docs.find((d) => d.id === activeDocumentId) ?? null;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,21 +61,31 @@ export default function DocumentsPanel({
     setUploading(true);
     try {
       const form = new FormData();
-      form.set("title", title.trim() || file?.name || "Untitled document");
+      const docTitle = title.trim() || file?.name || "Untitled document";
+      form.set("title", docTitle);
       form.set("kind", kind);
       form.set("method", method);
       if (method === "llm" && apiKey.trim()) form.set("apiKey", apiKey.trim());
       if (file) form.set("file", file);
       if (text.trim()) form.set("text", text.trim());
-      const res = await fetch("/api/documents", { method: "POST", body: form });
+      const res = await fetch("/api/analyze", { method: "POST", body: form });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? `Upload failed (${res.status})`);
+      if (!res.ok) throw new Error(data.error ?? `Analyze failed (${res.status})`);
+
+      const doc: LocalDocument = {
+        id: newDocumentId(),
+        title: data.title ?? docTitle,
+        kind: data.kind ?? kind,
+        createdAt: new Date().toISOString(),
+        nodes: data.nodes ?? [],
+        coverage: data.coverage ?? [],
+      };
+      setDocs(saveDocument(doc));
       setTitle("");
       setText("");
       setFile(null);
       setMode("list");
-      refresh();
-      onShowHeatmap(data.id);
+      onShowHeatmap(doc.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -103,10 +93,9 @@ export default function DocumentsPanel({
     }
   };
 
-  const remove = async (id: string) => {
-    await fetch(`/api/documents/${id}`, { method: "DELETE" });
+  const remove = (id: string) => {
+    setDocs(deleteDocument(id));
     if (activeDocumentId === id) onShowHeatmap(null);
-    refresh();
   };
 
   return (
@@ -134,15 +123,9 @@ export default function DocumentsPanel({
         {mode === "upload" ? (
           <form onSubmit={submit} className="flex flex-col gap-3">
             <p className="text-sm text-slate-400">
-              Upload a PDF or paste text from a paper, syllabus, or exam. Its topics
-              get mapped onto the MSC taxonomy and painted as a coverage heatmap.
+              Upload a PDF or paste text from a paper, syllabus, or exam. Coverage is
+              saved in this browser&apos;s local storage.
             </p>
-            {!signedIn && (
-              <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200/90">
-                Not signed in — analyses stay on this machine. Sign in to keep them
-                across devices.
-              </p>
-            )}
             <label className="block text-xs font-medium uppercase tracking-wide text-slate-400">
               Title
               <input
@@ -253,8 +236,7 @@ export default function DocumentsPanel({
           </form>
         ) : (
           <>
-            {loading && <p className="text-sm text-slate-400">Loading…</p>}
-            {!loading && docs.length === 0 && (
+            {docs.length === 0 && (
               <div className="text-sm text-slate-400">
                 <p className="mb-3">No documents yet.</p>
                 <button
@@ -267,19 +249,19 @@ export default function DocumentsPanel({
             )}
             <div className="flex flex-col gap-2">
               {docs.map((d) => {
-                const active = d.id === activeDocumentId;
+                const isActive = d.id === activeDocumentId;
                 return (
                   <div
                     key={d.id}
                     className={`rounded-xl border p-3 ${
-                      active
+                      isActive
                         ? "border-orange-400/40 bg-orange-500/10"
                         : "border-slate-700/40 bg-slate-800/30"
                     }`}
                   >
                     <div className="mb-1 flex items-start justify-between gap-2">
                       <button
-                        onClick={() => onShowHeatmap(active ? null : d.id)}
+                        onClick={() => onShowHeatmap(isActive ? null : d.id)}
                         className="text-left text-sm font-medium text-slate-100 hover:text-white"
                       >
                         {d.title}
@@ -295,21 +277,11 @@ export default function DocumentsPanel({
                     <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500">
                       <span>{d.kind}</span>
                       <span>·</span>
-                      <span
-                        className={
-                          d.status === "done"
-                            ? "text-emerald-400"
-                            : d.status === "error"
-                              ? "text-rose-400"
-                              : "text-amber-400"
-                        }
-                      >
-                        {d.status}
-                      </span>
+                      <span className="text-emerald-400">local</span>
                       <span>·</span>
                       <span>{new Date(d.createdAt).toLocaleDateString()}</span>
                     </div>
-                    {active && (
+                    {isActive && (
                       <button
                         onClick={() => onShowHeatmap(null)}
                         className="mt-2 text-xs text-orange-300 hover:text-orange-200"
@@ -322,13 +294,13 @@ export default function DocumentsPanel({
               })}
             </div>
 
-            {activeDocumentId && coverage && (
+            {active && (
               <div className="mt-4">
                 <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-                  Coverage ({coverage.length})
+                  Coverage ({active.coverage.length})
                 </p>
                 <div className="flex flex-col gap-1.5">
-                  {coverage.slice(0, 25).map((c) => (
+                  {active.coverage.slice(0, 25).map((c) => (
                     <button
                       key={c.nodeId}
                       onClick={() => onNavigate(c.nodeId)}

@@ -10,8 +10,6 @@ services:
       AUTO_INGEST: ${AUTO_INGEST:-basic}
       # Optional: enables the AI analysis method without pasting a key in the UI
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # Optional: use an external Postgres instead of the embedded database
-      DATABASE_URL: ${DATABASE_URL:-}
     volumes:
       - mathmap-data:/app/.data
 

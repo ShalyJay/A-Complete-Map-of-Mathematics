@@ -2,20 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import type { User } from "@supabase/supabase-js";
 import type {
   DocumentNodeLite,
   GraphPayload,
   OverlayMode,
   UserNodeStateLite,
 } from "@/lib/types";
+import { getDocument, loadMastery, saveMasteryEntry } from "@/lib/localStore";
 import { buildGraph, buildIndex, collapseSingleFieldBranches } from "./map/graphStore";
 import { computeHeatColors, computeMasteryColors } from "./map/overlays";
 import type { FocusRequest } from "./map/MathMap";
 import SearchBox from "./SearchBox";
 import Breadcrumbs from "./Breadcrumbs";
 import DetailPanel from "./DetailPanel";
-import AuthButton from "./AuthButton";
 import DocumentsPanel from "./DocumentsPanel";
 import { GRAND_BRANCHES } from "@/lib/branches";
 
@@ -28,7 +27,6 @@ export default function AppShell() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
-  const [user, setUser] = useState<User | null>(null);
   const [states, setStates] = useState<UserNodeStateLite[]>([]);
   const [overlay, setOverlay] = useState<OverlayMode>("none");
   const [docNodes, setDocNodes] = useState<DocumentNodeLite[] | null>(null);
@@ -46,31 +44,21 @@ export default function AppShell() {
       .catch((e) => setError(String(e)));
   }, []);
 
+  useEffect(() => {
+    setStates(loadMastery());
+  }, []);
+
   const index = useMemo(() => (payload ? buildIndex(payload) : null), [payload]);
   const graph = useMemo(
     () => (payload && index ? buildGraph(payload, index) : null),
     [payload, index],
   );
 
-  // ---- user mastery states -----------------------------------------------------
-  const refreshStates = useCallback(() => {
-    fetch("/api/state")
-      .then((r) => r.json())
-      .then((d) => setStates(d.states ?? []))
-      .catch(() => setStates([]));
-  }, []);
-  useEffect(() => {
-    if (user) refreshStates();
-    else setStates([]);
-  }, [user, refreshStates]);
-
-  // ---- document overlay data -----------------------------------------------------
+  // Document heatmap from localStorage
   useEffect(() => {
     if (typeof overlay === "object") {
-      fetch(`/api/documents/${overlay.documentId}/nodes`)
-        .then((r) => r.json())
-        .then((d) => setDocNodes(d.nodes ?? []))
-        .catch(() => setDocNodes([]));
+      const doc = getDocument(overlay.documentId);
+      setDocNodes(doc?.nodes ?? []);
     } else {
       setDocNodes(null);
     }
@@ -83,9 +71,6 @@ export default function AppShell() {
     return null;
   }, [overlay, index, states, docNodes]);
 
-  // ---- navigation ------------------------------------------------------------------
-  // Several sections can be expanded at once; the layout clamps each fan to
-  // the space its expanded neighbors leave free.
   const navigateTo = useCallback(
     (id: string) => {
       if (!index) return;
@@ -121,8 +106,6 @@ export default function AppShell() {
   const breadcrumbNavigate = useCallback(
     (id: string) => {
       if (!index) return;
-      // collapse everything deeper than this node within its own subtree, but
-      // leave other expanded branches alone
       setExpanded((prev) => {
         const next = new Set<string>();
         for (const e of prev) {
@@ -145,27 +128,10 @@ export default function AppShell() {
   );
 
   const patchState = useCallback(
-    async (nodeId: string, patch: { mastery?: number; isProblemArea?: boolean }) => {
-      // optimistic update
-      setStates((prev) => {
-        const existing = prev.find((s) => s.nodeId === nodeId);
-        const next = prev.filter((s) => s.nodeId !== nodeId);
-        next.push({
-          nodeId,
-          mastery: patch.mastery ?? existing?.mastery ?? 0,
-          isProblemArea: patch.isProblemArea ?? existing?.isProblemArea ?? false,
-          notes: existing?.notes ?? null,
-        });
-        return next;
-      });
-      await fetch("/api/state", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nodeId, ...patch }),
-      });
-      refreshStates();
+    (nodeId: string, patch: { mastery?: number; isProblemArea?: boolean }) => {
+      setStates(saveMasteryEntry(nodeId, patch));
     },
-    [refreshStates],
+    [],
   );
 
   if (error) {
@@ -175,7 +141,7 @@ export default function AppShell() {
           <p className="mb-2 font-semibold text-white">Couldn&apos;t load the map</p>
           <p className="mb-3 text-slate-400">{error}</p>
           <p>
-            Make sure the database is seeded: run{" "}
+            Make sure the graph is seeded: run{" "}
             <code className="rounded bg-slate-800 px-1.5 py-0.5">npm run ingest:all</code>{" "}
             and reload.
           </p>
@@ -216,7 +182,6 @@ export default function AppShell() {
         </div>
       )}
 
-      {/* top bar */}
       <div className="pointer-events-none absolute left-0 right-0 top-0 z-10 flex items-start justify-between gap-3 p-4">
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-3">
@@ -236,7 +201,6 @@ export default function AppShell() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* 2D / 3D view toggle */}
           <div className="panel pointer-events-auto flex rounded-xl p-1 text-sm">
             <button
               onClick={() => setIs3D(true)}
@@ -253,7 +217,6 @@ export default function AppShell() {
               2D
             </button>
           </div>
-          {/* overlay toggles */}
           <div className="panel pointer-events-auto flex rounded-xl p-1 text-sm">
             <button
               onClick={() => setOverlay("none")}
@@ -264,7 +227,7 @@ export default function AppShell() {
             <button
               onClick={() => setOverlay("mastery")}
               className={`rounded-lg px-3 py-1.5 ${overlay === "mastery" ? "bg-slate-600/60 text-white" : "text-slate-400 hover:text-white"}`}
-              title={user ? "Show your mastery overlay" : "Sign in to use the mastery overlay"}
+              title="Personal mastery overlay (saved in this browser)"
             >
               Mastery
             </button>
@@ -275,11 +238,9 @@ export default function AppShell() {
               Documents
             </button>
           </div>
-          <AuthButton onAuthChange={setUser} />
         </div>
       </div>
 
-      {/* legend */}
       <div className="panel pointer-events-auto absolute bottom-4 left-4 z-10 rounded-xl p-3">
         {overlay === "none" ? (
           <div>
@@ -336,18 +297,15 @@ export default function AppShell() {
         )}
       </div>
 
-      {/* hint */}
       <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 text-xs text-slate-500">
         {is3D
           ? "Drag to rotate · shift-drag or ⌘-drag to pan · scroll to zoom · click bubbles to expand"
           : "Click to explore · click a theorem to pin its derivation chain · scroll to zoom"}
       </div>
 
-      {/* right side: detail panel or documents panel */}
       <div className="absolute bottom-4 right-4 top-20 z-10 flex gap-3">
         {docsOpen && (
           <DocumentsPanel
-            signedIn={!!user}
             activeDocumentId={typeof overlay === "object" ? overlay.documentId : null}
             onShowHeatmap={(documentId) =>
               setOverlay(documentId ? { documentId } : "none")
@@ -362,7 +320,6 @@ export default function AppShell() {
             onClose={() => setSelectedId(null)}
             onNavigate={navigateTo}
             userState={stateFor(selectedId)}
-            signedIn={!!user}
             onStateChange={(patch) => patchState(selectedId, patch)}
           />
         )}

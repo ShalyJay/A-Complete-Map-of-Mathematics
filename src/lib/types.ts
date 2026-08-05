@@ -54,14 +54,6 @@ export interface UserNodeStateLite {
   notes: string | null;
 }
 
-export interface DocumentLite {
-  id: string;
-  title: string;
-  kind: string;
-  status: string;
-  createdAt: string;
-}
-
 export interface DocumentNodeLite {
   nodeId: string;
   weight: number;

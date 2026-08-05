@@ -4,14 +4,13 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 export type Db = PostgresJsDatabase<typeof schema>;
 
 /**
- * Database client factory.
+ * Local graph database (embedded PGlite in ./.data/pglite).
+ * Optional DATABASE_URL overrides with Postgres if you want a remote graph store.
  *
- * - If DATABASE_URL is set (e.g. a Supabase Postgres connection string), use it.
- * - Otherwise fall back to an embedded PGlite database stored in ./.data/pglite,
- *   so the whole app (including ingestion) runs with zero external services.
+ * Personal data (mastery, document analyses) is NOT here — it lives in the
+ * browser's localStorage.
  *
- * A global singleton keeps Next.js dev-mode HMR from opening duplicate handles.
- * Note: PGlite is single-writer — don't run ingest scripts while `next dev` holds the DB.
+ * PGlite is single-writer — don't run ingest scripts while `next dev` holds the DB.
  */
 const globalForDb = globalThis as unknown as { __mathmapDb?: Db };
 

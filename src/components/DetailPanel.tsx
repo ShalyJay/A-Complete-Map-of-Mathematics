@@ -27,9 +27,7 @@ interface Props {
   nodeId: string;
   onClose: () => void;
   onNavigate: (id: string) => void;
-  /** null = signed out */
   userState: UserNodeStateLite | null | undefined;
-  signedIn: boolean;
   onStateChange: (patch: { mastery?: number; isProblemArea?: boolean }) => void;
 }
 
@@ -38,7 +36,6 @@ export default function DetailPanel({
   onClose,
   onNavigate,
   userState,
-  signedIn,
   onStateChange,
 }: Props) {
   const [detail, setDetail] = useState<NodeDetail | null>(null);
@@ -150,44 +147,36 @@ export default function DetailPanel({
           )}
         </div>
 
-        {/* mastery controls */}
+        {/* mastery controls — persisted in localStorage */}
         <div className="mb-4 rounded-xl border border-slate-700/40 bg-slate-800/40 p-3">
           <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
             Your mastery
           </p>
-          {signedIn ? (
-            <>
-              <div className="flex items-center gap-1">
-                {[1, 2, 3, 4, 5].map((v) => (
-                  <button
-                    key={v}
-                    onClick={() => onStateChange({ mastery: mastery === v ? 0 : v })}
-                    className={`h-7 w-9 rounded-md text-sm transition-colors ${
-                      v <= mastery
-                        ? "bg-emerald-500/70 text-white"
-                        : "bg-slate-700/50 text-slate-400 hover:bg-slate-600/50"
-                    }`}
-                    title={`Mastery ${v}/5`}
-                  >
-                    {v}
-                  </button>
-                ))}
-              </div>
-              <label className="mt-2.5 flex cursor-pointer items-center gap-2 text-sm text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={isProblem}
-                  onChange={(e) => onStateChange({ isProblemArea: e.target.checked })}
-                  className="h-4 w-4 accent-rose-500"
-                />
-                Mark as problem area
-              </label>
-            </>
-          ) : (
-            <p className="text-sm text-slate-500">
-              Sign in to track mastery and problem areas.
-            </p>
-          )}
+          <div className="flex items-center gap-1">
+            {[1, 2, 3, 4, 5].map((v) => (
+              <button
+                key={v}
+                onClick={() => onStateChange({ mastery: mastery === v ? 0 : v })}
+                className={`h-7 w-9 rounded-md text-sm transition-colors ${
+                  v <= mastery
+                    ? "bg-emerald-500/70 text-white"
+                    : "bg-slate-700/50 text-slate-400 hover:bg-slate-600/50"
+                }`}
+                title={`Mastery ${v}/5`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+          <label className="mt-2.5 flex cursor-pointer items-center gap-2 text-sm text-slate-300">
+            <input
+              type="checkbox"
+              checked={isProblem}
+              onChange={(e) => onStateChange({ isProblemArea: e.target.checked })}
+              className="h-4 w-4 accent-rose-500"
+            />
+            Mark as problem area
+          </label>
         </div>
 
         {/* connections: what each link points to, and why they're connected */}

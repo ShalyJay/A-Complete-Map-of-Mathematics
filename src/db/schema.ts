@@ -1,13 +1,8 @@
 import {
-  boolean,
   index,
   integer,
   pgTable,
-  primaryKey,
-  real,
   text,
-  timestamp,
-  uuid,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -17,6 +12,9 @@ import {
  * - subfield:  MSC middle level (e.g. 11A) — depth 2
  * - topic:     MSC leaf (e.g. 11A41 Primes) — depth 3
  * - theorem / axiom / conjecture / definition: Wikidata leaf entities — depth 4
+ *
+ * Personal data (mastery, analyzed documents) lives in the browser's
+ * localStorage — only the shared math graph is stored here.
  */
 export const nodes = pgTable(
   "nodes",
@@ -53,51 +51,5 @@ export const edges = pgTable(
     index("edges_source_idx").on(t.source),
     index("edges_target_idx").on(t.target),
     index("edges_type_idx").on(t.type),
-  ],
-);
-
-export const userNodeState = pgTable(
-  "user_node_state",
-  {
-    userId: uuid("user_id").notNull(),
-    nodeId: text("node_id").notNull(),
-    mastery: integer("mastery").notNull().default(0), // 0–5
-    isProblemArea: boolean("is_problem_area").notNull().default(false),
-    notes: text("notes"),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (t) => [
-    primaryKey({ columns: [t.userId, t.nodeId] }),
-    index("uns_user_idx").on(t.userId),
-  ],
-);
-
-export const documents = pgTable(
-  "documents",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id"),
-    title: text("title").notNull(),
-    kind: text("kind").notNull(), // paper | course | exam | other
-    storagePath: text("storage_path"),
-    status: text("status").notNull().default("pending"), // pending | processing | done | error
-    error: text("error"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-  },
-  (t) => [index("documents_user_idx").on(t.userId)],
-);
-
-export const documentNodes = pgTable(
-  "document_nodes",
-  {
-    documentId: uuid("document_id").notNull(),
-    nodeId: text("node_id").notNull(),
-    weight: real("weight").notNull(), // 0–1, propagated up the tree
-    rationale: text("rationale"),
-    direct: boolean("direct").notNull().default(true), // false = weight propagated from a descendant
-  },
-  (t) => [
-    primaryKey({ columns: [t.documentId, t.nodeId] }),
-    index("dn_doc_idx").on(t.documentId),
   ],
 );

@@ -1,50 +1,17 @@
+/**
+ * Analyze an uploaded document / pasted text against the map taxonomy.
+ * Returns coverage for the client to store in localStorage — no user DB writes.
+ */
 import { NextResponse } from "next/server";
-import { desc, eq, isNull, or } from "drizzle-orm";
 import { z } from "zod";
-import { getDb, schema } from "@/db";
-import { getUserId } from "@/lib/supabase/server";
 import {
   classifyByKeywords,
   classifyDocument,
-  storeClassifications,
+  resolveClassifications,
 } from "@/lib/analysis";
-import type { DocumentLite } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
-
-export async function GET() {
-  const userId = await getUserId();
-  const db = await getDb();
-  const rows = await db
-    .select({
-      id: schema.documents.id,
-      title: schema.documents.title,
-      kind: schema.documents.kind,
-      status: schema.documents.status,
-      createdAt: schema.documents.createdAt,
-    })
-    .from(schema.documents)
-    .where(
-      userId
-        ? or(eq(schema.documents.userId, userId), isNull(schema.documents.userId))
-        : isNull(schema.documents.userId),
-    )
-    .orderBy(desc(schema.documents.createdAt))
-    .limit(50);
-
-  const documents: DocumentLite[] = rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    kind: r.kind,
-    status: r.status,
-    createdAt: r.createdAt.toISOString(),
-  }));
-  return NextResponse.json({
-    documents,
-    llmConfigured: !!process.env.ANTHROPIC_API_KEY,
-  });
-}
 
 const metaSchema = z.object({
   title: z.string().min(1).max(300),
@@ -62,15 +29,19 @@ async function extractPdfText(buf: ArrayBuffer): Promise<string> {
   return Array.isArray(text) ? text.join("\n") : text;
 }
 
+export async function GET() {
+  return NextResponse.json({
+    llmConfigured: !!process.env.ANTHROPIC_API_KEY,
+  });
+}
+
 export async function POST(req: Request) {
-  const userId = await getUserId();
   const contentType = req.headers.get("content-type") ?? "";
   let title: string;
   let kind: "paper" | "course" | "exam" | "other";
   let method: "keyword" | "llm";
   let apiKey: string | undefined;
   let text: string;
-  let storagePath: string | null = null;
 
   if (contentType.includes("multipart/form-data")) {
     const form = await req.formData();
@@ -94,21 +65,10 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "File too large (15 MB max)" }, { status: 400 });
       }
       const buf = await file.arrayBuffer();
-
-      // save to disk first: pdf.js transfers (detaches) the buffer we hand it,
-      // so it must get its own copy and the original must be persisted before
-      const fs = await import("node:fs/promises");
-      const path = await import("node:path");
-      const dir = path.join(process.cwd(), ".data", "uploads");
-      await fs.mkdir(dir, { recursive: true });
-      const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
-      storagePath = path.join(dir, `${Date.now()}-${safe}`);
-      await fs.writeFile(storagePath, Buffer.from(buf));
-
       const name = file.name.toLowerCase();
       try {
         if (name.endsWith(".pdf") || file.type === "application/pdf") {
-          text = await extractPdfText(buf.slice(0));
+          text = await extractPdfText(buf);
         } else {
           text = new TextDecoder().decode(buf);
         }
@@ -144,38 +104,22 @@ export async function POST(req: Request) {
     );
   }
 
-  const db = await getDb();
-  const [doc] = await db
-    .insert(schema.documents)
-    .values({
-      userId: userId ?? null,
-      title,
-      kind,
-      storagePath,
-      status: "processing",
-    })
-    .returning({ id: schema.documents.id });
-
   try {
     const classifications =
       method === "llm"
         ? await classifyDocument(text, kind, title, apiKey)
         : await classifyByKeywords(text);
-    const n = await storeClassifications(doc.id, classifications);
-    await db
-      .update(schema.documents)
-      .set({ status: "done", error: null })
-      .where(eq(schema.documents.id, doc.id));
-    return NextResponse.json({ id: doc.id, status: "done", classified: n });
+    const resolved = await resolveClassifications(classifications);
+    return NextResponse.json({
+      title,
+      kind,
+      status: "done",
+      classified: resolved.directCount,
+      nodes: resolved.nodes,
+      coverage: resolved.coverage,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await db
-      .update(schema.documents)
-      .set({ status: "error", error: message })
-      .where(eq(schema.documents.id, doc.id));
-    return NextResponse.json(
-      { id: doc.id, status: "error", error: message },
-      { status: 500 },
-    );
+    return NextResponse.json({ status: "error", error: message }, { status: 500 });
   }
 }
