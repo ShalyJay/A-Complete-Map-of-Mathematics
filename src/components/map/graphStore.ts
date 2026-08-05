@@ -211,12 +211,11 @@ export function buildGraph(payload: GraphPayload, index: NodeIndex): Graph {
   for (const e of payload.edges) {
     if (!graph.hasNode(e.source) || !graph.hasNode(e.target)) continue;
     if (e.type === "depends-on") {
-      // stored as dependent -> prerequisite; flipped so source is the
-      // prerequisite. These edges are always hidden on the base layer — the
-      // map draws them as arrows on the top canvas, above the bubbles.
+      // stored as dependent -> prerequisite; draw the arrow in derivation
+      // direction (prerequisite -> dependent) so chains read axiom -> theorem.
       graph.addEdgeWithKey(`d:${i++}`, e.target, e.source, {
         edgeKind: "depends-on",
-        type: "curved",
+        type: "curvedArrow",
         curvature: 0.15,
         size: 1.1,
         color: "rgba(251,146,60,0.65)",

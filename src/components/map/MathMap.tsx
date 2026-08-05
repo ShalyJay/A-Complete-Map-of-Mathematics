@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import Sigma from "sigma";
 import type { Settings } from "sigma/settings";
 import type { NodeDisplayData, PartialButFor } from "sigma/types";
-import EdgeCurveProgram from "@sigma/edge-curve";
+import EdgeCurveProgram, { EdgeCurvedArrowProgram } from "@sigma/edge-curve";
 import type Graph from "graphology";
 import type { NodeIndex } from "./graphStore";
 import { baseColor } from "./graphStore";
@@ -261,6 +261,7 @@ export default function MathMap({
       defaultDrawNodeHover: drawNodeHover,
       edgeProgramClasses: {
         curved: EdgeCurveProgram,
+        curvedArrow: EdgeCurvedArrowProgram,
       },
       nodeReducer: (node, data) => {
         const trace = activeTraceRef.current();
