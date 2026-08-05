@@ -4,7 +4,7 @@ An explorable knowledge graph of mathematics — grand branches down to theorems
 
 The map is a ring of 8 large branch bubbles with labels inside (branches that wrap a single MSC field, like Number Theory (11-XX) and Discrete Mathematics (05-XX), show the MSC code right on the branch bubble). Clicking a branch **pops it out of the ring** and fans its fields across the free space; each deeper level (field → subfield → topic) fans further outward. Several branches can be open at once — each fan is clamped so it never invades its expanded neighbor's arc. Within a section, **axioms hug the inner arc** (foundations point toward the center), theorems fan outward by derivation depth, and conjectures sit on the outermost row. Derivation arrows are drawn **above** the bubbles. Hover a theorem to trace its lineage; clicking one **pins** the full chain back to the axioms (it stays lit when the mouse moves away) — chain members from other branches appear on inner ghost rings, axioms nearest the center, so cross-branch dependencies read as chords.
 
-Physics and computer science are planned future additions and are deliberately excluded from the mathematics map.
+Computer science (MSC 68), information theory (94), and mathematical physics (70–86) are included under the Applied & Computational branch.
 
 ## Quick start (no external services)
 
@@ -52,10 +52,10 @@ docker run -p 3000:3000 -v mathmap-data:/app/.data math-map
 
 | Script | Source | What it adds |
 |--------|--------|--------------|
-| `npm run ingest:msc` | [MSC 2020 SKOS](https://github.com/TIBHannover/MSC2020_SKOS) Turtle | Grand branches, fields, subfields, topics + see-also edges (physics/CS sections pruned) |
+| `npm run ingest:msc` | [MSC 2020 SKOS](https://github.com/TIBHannover/MSC2020_SKOS) Turtle | Grand branches, fields, subfields, topics + see-also edges (CS/info theory/math physics under Applied) |
 | `npm run ingest:wikidata` | Wikidata SPARQL | Theorems, axioms, conjectures as leaf nodes + sparse dependency links |
 | `npm run ingest:deps` | Curated dataset | Classic derivation chains (axiom → theorem → theorem) + seeds for famous results Wikidata misses |
-| `npm run ingest:wikipedia` | Wikipedia REST | Summaries + thumbnails for nodes with articles |
+| `npm run ingest:wikipedia` | Wikipedia Action API | Summaries + thumbnails for nodes with articles; title lookup for fields, subfields, and topics |
 
 Cached downloads live in `data/cache/` (gitignored).
 

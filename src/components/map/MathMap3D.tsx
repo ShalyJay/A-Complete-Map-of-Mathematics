@@ -3,9 +3,10 @@
 /**
  * 3D render of the map: a navigable space you can rotate and zoom freely.
  *
- * The 8 grand branches sit on an equatorial ring; expanding a bubble fans its
- * children across a spherical cap around its outward direction, so open
- * sections spread into the z axis as well as x/y. Axioms sit on inner shells,
+ * The 8 grand branches share a sphere, staggered alternately above and below
+ * the equator; expanding a bubble fans its children across a spherical cap
+ * around its outward direction, so open sections spread into the z axis as
+ * well as x/y. Axioms sit on inner shells,
  * theorems on outer shells by derivation level, and dependency arrows are 3D
  * chords through the space. Orbit to rotate, scroll to zoom, right-drag to pan.
  */
@@ -17,7 +18,7 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type Graph from "graphology";
 import type { NodeIndex } from "./graphStore";
 import { computeLevels } from "./layout";
-import { computeLayout3D, RADII3, type Vec3 } from "./layout3d";
+import { computeLayout3D, BRANCH_TILT, RADII3, type Vec3 } from "./layout3d";
 import type { FocusRequest } from "./MathMap";
 
 interface Props {
@@ -102,6 +103,9 @@ const NodeItem = memo(function NodeItem({
         scale={nd.size}
         onClick={(e) => {
           e.stopPropagation();
+          // a pan/rotate drag that happens to start on a bubble is not a click
+          const ne = e.nativeEvent;
+          if (e.delta > 5 || ne.shiftKey || ne.metaKey || ne.ctrlKey) return;
           onClickNode(nd.id);
         }}
         onPointerOver={(e) => {
@@ -513,21 +517,10 @@ function Scene({
     gl.domElement.style.cursor = hoverId ? "pointer" : "default";
   }, [hoverId, gl]);
 
-  // hold Shift to pan with the left button (right-drag always pans)
-  useEffect(() => {
-    const setPan = (pan: boolean) => {
-      const ctrl = controlsRef.current;
-      if (ctrl) ctrl.mouseButtons.LEFT = pan ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
-    };
-    const down = (e: KeyboardEvent) => e.key === "Shift" && setPan(true);
-    const up = (e: KeyboardEvent) => e.key === "Shift" && setPan(false);
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
-    };
-  }, []);
+  // Panning with Shift/⌘/Ctrl + left-drag is built into OrbitControls: when
+  // the left button is set to ROTATE and a modifier is held at pointer-down,
+  // it pans instead. Don't remap mouseButtons on keydown — the built-in
+  // modifier check would then invert it back to rotate.
 
   const traceActive = trace !== null;
   const inTrace = useCallback(
@@ -537,14 +530,16 @@ function Scene({
 
   return (
     <>
-      {/* equatorial guide rings */}
+      {/* guide sphere: latitude rings trace the two staggered branch bands */}
+      {[BRANCH_TILT, -BRANCH_TILT].map((t) => (
+        <mesh key={t} position={[0, 0, Math.sin(t) * RADII3.ring]}>
+          <torusGeometry args={[Math.cos(t) * RADII3.ring, 1.0, 8, 160]} />
+          <meshBasicMaterial color="#1e293b" transparent opacity={0.5} />
+        </mesh>
+      ))}
       <mesh>
-        <torusGeometry args={[RADII3.ring, 1.1, 8, 160]} />
-        <meshBasicMaterial color="#1e293b" transparent opacity={0.55} />
-      </mesh>
-      <mesh>
-        <torusGeometry args={[RADII3.childShell[0], 0.7, 8, 200]} />
-        <meshBasicMaterial color="#16202f" transparent opacity={0.4} />
+        <sphereGeometry args={[RADII3.ring, 28, 18]} />
+        <meshBasicMaterial color="#16202f" wireframe transparent opacity={0.14} />
       </mesh>
 
       {edges.map((e) => (
@@ -605,13 +600,25 @@ export default function MathMap3D(props: Props) {
   // whole Canvas when that happens; map state lives in the parent, so only
   // the camera resets.
   const [glKey, setGlKey] = useState(0);
+  // Rotating/panning starts and ends on empty space, which R3F reports as a
+  // "missed" click — only clear the selection for a genuine stationary
+  // left-click (no drag, no Shift/⌘/Ctrl/right-button pan).
+  const pointerDown = useRef<{ x: number; y: number } | null>(null);
   return (
-    <div className="absolute inset-0">
+    <div
+      className="absolute inset-0"
+      onPointerDown={(e) => (pointerDown.current = { x: e.clientX, y: e.clientY })}
+    >
       <Canvas
         key={glKey}
         camera={{ position: [0, -420, 1400], fov: 55, near: 1, far: 12000 }}
         dpr={[1, 2]}
-        onPointerMissed={() => props.onSelect(null)}
+        onPointerMissed={(e) => {
+          const d = pointerDown.current;
+          const moved = d ? Math.hypot(e.clientX - d.x, e.clientY - d.y) : 0;
+          if (e.button === 0 && !e.shiftKey && !e.metaKey && !e.ctrlKey && moved < 6)
+            props.onSelect(null);
+        }}
         onCreated={({ gl }) => {
           gl.domElement.addEventListener("webglcontextlost", (e) => {
             e.preventDefault();

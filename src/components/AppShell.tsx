@@ -339,7 +339,7 @@ export default function AppShell() {
       {/* hint */}
       <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 text-xs text-slate-500">
         {is3D
-          ? "Drag to rotate · shift-drag or right-drag to pan · scroll to zoom · click bubbles to expand"
+          ? "Drag to rotate · shift-drag or ⌘-drag to pan · scroll to zoom · click bubbles to expand"
           : "Click to explore · click a theorem to pin its derivation chain · scroll to zoom"}
       </div>
 

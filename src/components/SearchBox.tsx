@@ -32,6 +32,7 @@ const KIND_TAGS = [
   { id: "lemma", label: "Lemmas" },
   { id: "inequality", label: "Inequalities" },
   { id: "conjecture", label: "Conjectures" },
+  { id: "definition", label: "Definitions" },
   { id: "topic", label: "Topics" },
   { id: "subfield", label: "Subfields" },
 ];

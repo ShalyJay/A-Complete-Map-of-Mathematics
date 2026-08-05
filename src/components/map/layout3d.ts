@@ -5,10 +5,12 @@ import { orderBranches } from "./layout";
  * Expansion-driven 3D layout.
  *
  * Same semantics as the 2D radial layout, lifted into space: the 8 grand
- * branches sit on a ring in the equatorial (XY) plane, and expanding a node
- * pops it outward and fans its children across a *spherical cap* around the
- * node's outward direction — so an open section spreads into z as well as
- * x/y and gets a whole shell of room instead of an arc.
+ * branches share a sphere — staggered alternately above and below the
+ * equator (a square antiprism for 8, the optimal spread that still keeps
+ * the orderBranches neighbor structure). Expanding a node pops it outward
+ * and fans its children across a *spherical cap* around the node's outward
+ * direction — so an open section spreads into z as well as x/y and gets a
+ * whole shell of room instead of an arc.
  *
  * Derivation still reads center-outward:
  *   - axioms sit on an inner shell (foundations point toward the origin),
@@ -33,6 +35,12 @@ export const RADII3 = {
   ghostBase: 110,
   ghostStep: 140,
 };
+
+/**
+ * Branches alternate above/below the equator by this angle, so the top ring
+ * becomes a sphere-sharing antiprism instead of a flat circle.
+ */
+export const BRANCH_TILT = 0.5;
 
 /** half-angle of the children cap, by parent depth */
 const CAP = [1.05, 0.78, 0.6, 0.48];
@@ -101,7 +109,12 @@ export function computeLayout3D(
   const branchDir = new Map<string, Vec3>();
   branches.forEach((id, i) => {
     const a = -Math.PI / 2 + i * sector;
-    branchDir.set(id, { x: Math.cos(a), y: Math.sin(a), z: 0 });
+    const t = i % 2 === 0 ? BRANCH_TILT : -BRANCH_TILT;
+    branchDir.set(id, {
+      x: Math.cos(a) * Math.cos(t),
+      y: Math.sin(a) * Math.cos(t),
+      z: Math.sin(t),
+    });
   });
 
   /** entity ordering: axioms in, then theorems by derivation depth, conjectures out */
@@ -262,16 +275,19 @@ export function computeLayout3D(
     if (!n) continue;
     const branchId = index.branchOf.get(id);
     const base = branchDir.get(branchId ?? "") ?? { x: 1, y: 0, z: 0 };
-    // deterministic offset (azimuth + out-of-plane tilt) so members don't stack
+    // deterministic cone offset around the branch direction so members
+    // don't stack (works for tilted, off-equator branch directions too)
     let h = 0;
     for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
-    const t1 = (((h >>> 0) % 1000) / 1000 - 0.5) * sector * 0.8;
-    const t2 = ((((h >>> 10) >>> 0) % 1000) / 1000 - 0.5) * 0.9;
-    const a = Math.atan2(base.y, base.x) + t1;
+    const polar = (((h >>> 0) % 1000) / 1000) * 0.55;
+    const az = ((((h >>> 10) >>> 0) % 1000) / 1000) * 2 * Math.PI;
+    const [u, v] = basis(base);
+    const sp = Math.sin(polar);
+    const cp = Math.cos(polar);
     const dir = normalize({
-      x: Math.cos(a) * Math.cos(t2),
-      y: Math.sin(a) * Math.cos(t2),
-      z: Math.sin(t2),
+      x: base.x * cp + (u.x * Math.cos(az) + v.x * Math.sin(az)) * sp,
+      y: base.y * cp + (u.y * Math.cos(az) + v.y * Math.sin(az)) * sp,
+      z: base.z * cp + (u.z * Math.cos(az) + v.z * Math.sin(az)) * sp,
     });
     const level = levels.get(id);
     let r: number;

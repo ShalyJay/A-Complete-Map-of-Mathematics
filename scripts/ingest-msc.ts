@@ -162,9 +162,8 @@ async function main() {
     });
   }
 
-  // Prune entire MSC sections (fields + all their descendants) that have no
-  // grand-branch mapping — e.g. physics (70-86) and computer science (68, 94),
-  // which are excluded from the mathematics map.
+  // Keep only MSC sections mapped to a grand branch (all MSC 2020 top-level
+  // math codes are mapped; any future unmapped prefix is skipped).
   const keptCodes = new Set<string>();
   for (const c of valid) {
     if (branchForMscPrefix(c.notation!.slice(0, 2))) keptCodes.add(c.notation!);
@@ -222,7 +221,7 @@ async function main() {
   }
 
   if (skippedNoBranch > 0) {
-    console.warn(`Skipped ${skippedNoBranch} concepts in unmapped sections (physics/CS)`);
+    console.warn(`Skipped ${skippedNoBranch} concepts in unmapped MSC sections`);
   }
   console.log(`Prepared ${nodeRows.length} nodes, ${edgeRows.length} edges. Writing...`);
 

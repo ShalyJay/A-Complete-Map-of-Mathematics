@@ -31,7 +31,7 @@ import { chunk } from "./lib";
 const SEED_ENTITIES: {
   slug: string;
   title: string;
-  type: "axiom" | "theorem";
+  type: "axiom" | "theorem" | "conjecture" | "definition";
   msc: string;
   wiki: string;
   summary: string;
@@ -614,6 +614,87 @@ const SEED_ENTITIES: {
     summary:
       "Gentzen's Hauptsatz: every sequent-calculus proof can be rewritten without the cut rule.",
   },
+  {
+    slug: "homotopy-type-theory",
+    title: "homotopy type theory",
+    type: "definition",
+    msc: "03B38",
+    wiki: "https://en.wikipedia.org/wiki/Homotopy_type_theory",
+    summary:
+      "A foundation for mathematics identifying types with spaces and equality with paths — univalent foundations linking type theory and homotopy theory.",
+  },
+  {
+    slug: "p-versus-np",
+    title: "P versus NP problem",
+    type: "conjecture",
+    msc: "68Q15",
+    wiki: "https://en.wikipedia.org/wiki/P_versus_NP_problem",
+    summary:
+      "Whether every problem whose solutions can be verified quickly can also be solved quickly — the central open question of computational complexity.",
+  },
+  {
+    slug: "chaos-theory",
+    title: "chaos theory",
+    type: "definition",
+    msc: "37D45",
+    wiki: "https://en.wikipedia.org/wiki/Chaos_theory",
+    summary:
+      "The study of deterministic dynamical systems that are highly sensitive to initial conditions, producing effectively unpredictable long-term behavior.",
+  },
+  {
+    slug: "finite-element-method",
+    title: "finite element method",
+    type: "definition",
+    msc: "65N30",
+    wiki: "https://en.wikipedia.org/wiki/Finite_element_method",
+    summary:
+      "A numerical technique that approximates PDE solutions by piecewise polynomial functions on a mesh — the workhorse of computational science and engineering.",
+  },
+  {
+    slug: "machine-learning",
+    title: "machine learning",
+    type: "definition",
+    msc: "68T05",
+    wiki: "https://en.wikipedia.org/wiki/Machine_learning",
+    summary:
+      "Algorithms that improve at a task from data rather than explicit programming — spanning statistical learning, optimization, and computational learning theory.",
+  },
+  {
+    slug: "string-theory",
+    title: "string theory",
+    type: "definition",
+    msc: "81T30",
+    wiki: "https://en.wikipedia.org/wiki/String_theory",
+    summary:
+      "A framework in mathematical physics treating particles as vibrating one-dimensional strings, deeply tied to geometry, topology, and quantum field theory.",
+  },
+  {
+    slug: "quantum-field-theory",
+    title: "quantum field theory",
+    type: "definition",
+    msc: "81T13",
+    wiki: "https://en.wikipedia.org/wiki/Quantum_field_theory",
+    summary:
+      "The synthesis of quantum mechanics and special relativity describing particles as excitations of fields — the language of the Standard Model and much of mathematical physics.",
+  },
+  {
+    slug: "information-theory",
+    title: "information theory",
+    type: "definition",
+    msc: "94A17",
+    wiki: "https://en.wikipedia.org/wiki/Information_theory",
+    summary:
+      "The mathematical study of information quantification, storage, and communication, founded on Shannon entropy and channel capacity.",
+  },
+  {
+    slug: "sheaf-theory",
+    title: "sheaf theory",
+    type: "definition",
+    msc: "18F20",
+    wiki: "https://en.wikipedia.org/wiki/Sheaf_(mathematics)",
+    summary:
+      "A tool for tracking locally defined data that glues consistently — central to algebraic geometry, topology, and modern category-theoretic mathematics.",
+  },
 ];
 
 const DEPENDENCIES: [dependent: string, prerequisite: string, note?: string][] = [
@@ -914,37 +995,88 @@ async function main() {
       await db
         .select({ title: schema.nodes.title })
         .from(schema.nodes)
-        .where(inArray(schema.nodes.type, ["axiom", "theorem", "conjecture"]))
+        .where(
+          inArray(schema.nodes.type, ["axiom", "theorem", "conjecture", "definition"]),
+        )
     ).map((n) => norm(n.title)),
   );
 
   let seeded = 0;
+  let refreshed = 0;
   for (const s of SEED_ENTITIES) {
-    if (existingTitles.has(norm(s.title))) continue; // Wikidata already has it
+    const id = `seed:${s.slug}`;
+    // Prefer an existing Wikidata/entity leaf with the same title over a seed.
+    if (existingTitles.has(norm(s.title))) {
+      const alreadySeed = (
+        await db
+          .select({ id: schema.nodes.id })
+          .from(schema.nodes)
+          .where(eq(schema.nodes.id, id))
+          .limit(1)
+      )[0];
+      if (!alreadySeed) continue;
+    }
     const parentId = resolveMsc(s.msc);
     if (!parentId) {
       console.warn(`  seed ${s.title}: no MSC parent for ${s.msc}, skipped`);
       continue;
     }
-    const id = `seed:${s.slug}`;
-    await db.insert(schema.nodes).values({
-      id,
-      type: s.type,
-      title: s.title,
-      summary: s.summary,
-      wikipediaUrl: s.wiki,
-      depth: 4,
-      parentId,
-    });
-    await db.insert(schema.edges).values({ source: id, target: parentId, type: "child-of" });
-    seeded++;
+    const existing = (
+      await db
+        .select({ id: schema.nodes.id })
+        .from(schema.nodes)
+        .where(eq(schema.nodes.id, id))
+        .limit(1)
+    )[0];
+    if (existing) {
+      await db
+        .update(schema.nodes)
+        .set({
+          type: s.type,
+          title: s.title,
+          summary: s.summary,
+          wikipediaUrl: s.wiki,
+          depth: 4,
+          parentId,
+        })
+        .where(eq(schema.nodes.id, id));
+      await db
+        .delete(schema.edges)
+        .where(
+          and(eq(schema.edges.source, id), eq(schema.edges.type, "child-of")),
+        );
+      await db.insert(schema.edges).values({
+        source: id,
+        target: parentId,
+        type: "child-of",
+      });
+      refreshed++;
+    } else {
+      await db.insert(schema.nodes).values({
+        id,
+        type: s.type,
+        title: s.title,
+        summary: s.summary,
+        wikipediaUrl: s.wiki,
+        depth: 4,
+        parentId,
+      });
+      await db.insert(schema.edges).values({
+        source: id,
+        target: parentId,
+        type: "child-of",
+      });
+      seeded++;
+    }
   }
-  console.log(`Seeded ${seeded} curated entities`);
+  console.log(`Seeded ${seeded} curated entities (${refreshed} refreshed)`);
 
   const entityNodes = await db
     .select({ id: schema.nodes.id, title: schema.nodes.title })
     .from(schema.nodes)
-    .where(inArray(schema.nodes.type, ["axiom", "theorem", "conjecture"]));
+    .where(
+      inArray(schema.nodes.type, ["axiom", "theorem", "conjecture", "definition"]),
+    );
   console.log(`${entityNodes.length} entity nodes loaded`);
 
   // exact-title map plus an unambiguous parenthetical-stripped fallback

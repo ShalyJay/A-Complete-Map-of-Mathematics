@@ -2,9 +2,8 @@
  * Curated top-level grouping of the MSC 2020 top-level fields into
  * 8 "grand branches" so the landing view isn't 63 siblings.
  *
- * Physics (70-86) and computer science (68, 94) MSC sections are deliberately
- * excluded: they are planned as future additions and must not appear on the
- * mathematics map.
+ * Computer science (68), information theory (94), and mathematical physics
+ * (70–86) live under Applied & Computational rather than as separate branches.
  */
 export interface GrandBranch {
   id: string; // node id, e.g. "branch:algebra"
@@ -89,8 +88,11 @@ export const GRAND_BRANCHES: GrandBranch[] = [
     slug: "applied",
     title: "Applied & Computational",
     summary:
-      "Mathematics in action: numerical analysis, optimization, operations research, mathematical economics, biology, and control theory.",
-    mscPrefixes: ["65", "90", "91", "92", "93"],
+      "Mathematics in action: numerical analysis, optimization, operations research, mathematical economics, biology, control theory, computer science, information theory, and mathematical physics.",
+    mscPrefixes: [
+      "65", "68", "70", "74", "76", "78", "80", "81", "82", "83", "85", "86",
+      "90", "91", "92", "93", "94",
+    ],
     color: "#84cc16",
   },
 ];

@@ -1,16 +1,19 @@
 /**
  * Fetch Wikipedia intro extracts (+ thumbnails) for every node that has a
- * known article, and attempt title-based lookups for branches/fields/subfields
- * that don't have one yet.
+ * known article, and attempt title-based lookups for fields/subfields/topics
+ * that still lack a real description.
  *
  * Uses the batched MediaWiki Action API (20 titles per request) — the REST
  * summary endpoint rate-limits per-title fetching far too aggressively.
+ *
+ * Fill-only: never overwrite curated branch blurbs or good MSC scope notes.
+ * Extracts are truncated so detail panels stay readable.
  *
  * Usage: npm run ingest:wikipedia   (run ingest:msc + ingest:wikidata first)
  */
 import fs from "node:fs";
 import path from "node:path";
-import { eq, isNotNull, isNull, and, inArray } from "drizzle-orm";
+import { eq, isNotNull, isNull, and, inArray, or, sql } from "drizzle-orm";
 import { getDb, schema } from "../src/db/index";
 import { chunk, sleep } from "./lib";
 
@@ -19,6 +22,7 @@ const USER_AGENT = "MathMapIngest/0.1 (personal project; map of mathematics)";
 const API = "https://en.wikipedia.org/w/api.php";
 const BATCH_SIZE = 20; // exlimit maximum
 const BATCH_DELAY_MS = 1200;
+const MAX_EXTRACT_CHARS = 700;
 
 /** Hand-picked articles for the curated grand branches. */
 const BRANCH_ARTICLES: Record<string, string> = {
@@ -27,11 +31,52 @@ const BRANCH_ARTICLES: Record<string, string> = {
   "branch:number-theory": "Number theory",
   "branch:analysis": "Mathematical analysis",
   "branch:geometry-topology": "Geometry",
-  "branch:discrete-cs": "Discrete mathematics",
+  "branch:discrete": "Discrete mathematics",
   "branch:probability-statistics": "Probability theory",
   "branch:applied": "Applied mathematics",
-  "branch:physics": "Mathematical physics",
 };
+
+/**
+ * MSC field titles are often too awkward for direct Wikipedia lookup
+ * ("General and overarching topics; collections"). Map node id → article.
+ */
+const FIELD_ARTICLES: Record<string, string> = {
+  "msc:00-XX": "Mathematics",
+  "msc:01-XX": "History of mathematics",
+  "msc:06-XX": "Order theory",
+  "msc:12-XX": "Field (mathematics)",
+  "msc:15-XX": "Linear algebra",
+  "msc:17-XX": "Non-associative algebra",
+  "msc:28-XX": "Measure (mathematics)",
+  "msc:37-XX": "Dynamical system",
+  "msc:39-XX": "Difference equation",
+  "msc:41-XX": "Approximation theory",
+  "msc:42-XX": "Harmonic analysis",
+  "msc:52-XX": "Convex geometry",
+  "msc:57-XX": "Manifold",
+  "msc:68-XX": "Computer science",
+  "msc:70-XX": "Classical mechanics",
+  "msc:74-XX": "Solid mechanics",
+  "msc:76-XX": "Fluid mechanics",
+  "msc:78-XX": "Optics",
+  "msc:80-XX": "Thermodynamics",
+  "msc:81-XX": "Quantum mechanics",
+  "msc:82-XX": "Statistical mechanics",
+  "msc:83-XX": "Theory of relativity",
+  "msc:85-XX": "Astrophysics",
+  "msc:86-XX": "Geophysics",
+  "msc:92-XX": "Mathematical biology",
+  "msc:94-XX": "Information theory",
+};
+
+const STUB_SUMMARIES = new Set([
+  "theorem",
+  "conjecture",
+  "axiom",
+  "lemma",
+  "definition",
+  "proposition",
+]);
 
 interface Summary {
   ok: boolean;
@@ -46,9 +91,9 @@ type Cache = Record<string, Summary>;
 
 function loadCache(): Cache {
   if (!fs.existsSync(CACHE_PATH)) return {};
-  const raw = JSON.parse(fs.readFileSync(CACHE_PATH, "utf8")) as Cache;
-  // Drop failed entries so rate-limited / transient failures retry on rerun.
-  return Object.fromEntries(Object.entries(raw).filter(([, v]) => v.ok));
+  // Keep both hits and misses so reruns do not re-hammer Wikipedia for known
+  // non-articles. Delete cache entries manually to force a retry.
+  return JSON.parse(fs.readFileSync(CACHE_PATH, "utf8")) as Cache;
 }
 
 interface ApiPage {
@@ -96,6 +141,26 @@ async function apiQuery(params: URLSearchParams): Promise<ApiResponse> {
 
 function titleFromUrl(url: string): string {
   return decodeURIComponent(url.replace(/^https?:\/\/en\.wikipedia\.org\/wiki\//, "")).replace(/_/g, " ");
+}
+
+function needsSummary(summary: string | null | undefined, title: string): boolean {
+  if (summary == null) return true;
+  const s = summary.trim();
+  if (s.length < 10) return true;
+  if (s === title.trim()) return true;
+  if (STUB_SUMMARIES.has(s.toLowerCase())) return true;
+  return false;
+}
+
+/** Truncate Wikipedia extracts to a readable panel length. */
+function truncateExtract(extract: string, maxLen = MAX_EXTRACT_CHARS): string {
+  const trimmed = extract.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= maxLen) return trimmed;
+  const slice = trimmed.slice(0, maxLen);
+  const lastPeriod = slice.lastIndexOf(". ");
+  if (lastPeriod > maxLen * 0.45) return slice.slice(0, lastPeriod + 1).trim();
+  const lastSpace = slice.lastIndexOf(" ");
+  return `${(lastSpace > 0 ? slice.slice(0, lastSpace) : slice).trim()}…`;
 }
 
 async function main() {
@@ -187,7 +252,13 @@ async function main() {
 
   // ---- 1. Nodes with a known article url -----------------------------------
   const withUrl = await db
-    .select({ id: schema.nodes.id, url: schema.nodes.wikipediaUrl })
+    .select({
+      id: schema.nodes.id,
+      title: schema.nodes.title,
+      type: schema.nodes.type,
+      summary: schema.nodes.summary,
+      url: schema.nodes.wikipediaUrl,
+    })
     .from(schema.nodes)
     .where(isNotNull(schema.nodes.wikipediaUrl));
   console.log(`${withUrl.length} nodes with known Wikipedia articles`);
@@ -195,21 +266,23 @@ async function main() {
   await fetchBatch(withUrl.map((n) => titleFromUrl(n.url!)));
 
   let updated = 0;
+  let summariesFilled = 0;
   for (const n of withUrl) {
     const s = cache[titleFromUrl(n.url!)];
-    if (usable(s)) {
-      await db
-        .update(schema.nodes)
-        .set({
-          summary: s.extract,
-          thumbnailUrl: s.thumbnail ?? null,
-          wikipediaUrl: s.url ?? n.url,
-        })
-        .where(eq(schema.nodes.id, n.id));
-      updated++;
-    }
+    if (!usable(s)) continue;
+    const writeSummary = n.type !== "branch" && needsSummary(n.summary, n.title);
+    await db
+      .update(schema.nodes)
+      .set({
+        ...(writeSummary ? { summary: truncateExtract(s.extract) } : {}),
+        thumbnailUrl: s.thumbnail ?? null,
+        wikipediaUrl: s.url ?? n.url,
+      })
+      .where(eq(schema.nodes.id, n.id));
+    updated++;
+    if (writeSummary) summariesFilled++;
   }
-  console.log(`Updated ${updated} nodes from known articles`);
+  console.log(`Updated ${updated} nodes from known articles (${summariesFilled} summaries filled)`);
 
   // ---- 2. Grand branches (hand-picked articles) ------------------------------
   await fetchBatch(Object.values(BRANCH_ARTICLES));
@@ -224,24 +297,67 @@ async function main() {
   }
   console.log("Branch articles linked (curated summaries kept)");
 
-  // ---- 3. Title-based lookup for fields/subfields without an article ---------
+  // ---- 2b. Hand-picked field articles (awkward MSC titles) -----------------
+  await fetchBatch(Object.values(FIELD_ARTICLES));
+  let fieldHits = 0;
+  for (const [nodeId, article] of Object.entries(FIELD_ARTICLES)) {
+    const s = cache[article];
+    if (!usable(s)) continue;
+    const row = (
+      await db
+        .select({
+          title: schema.nodes.title,
+          summary: schema.nodes.summary,
+          type: schema.nodes.type,
+        })
+        .from(schema.nodes)
+        .where(eq(schema.nodes.id, nodeId))
+        .limit(1)
+    )[0];
+    if (!row) continue;
+    const writeSummary = needsSummary(row.summary, row.title);
+    await db
+      .update(schema.nodes)
+      .set({
+        ...(writeSummary ? { summary: truncateExtract(s.extract) } : {}),
+        thumbnailUrl: s.thumbnail ?? null,
+        wikipediaUrl: s.url ?? null,
+      })
+      .where(eq(schema.nodes.id, nodeId));
+    if (writeSummary) fieldHits++;
+  }
+  console.log(`Filled ${fieldHits} fields via curated article map`);
+
+  // ---- 3. Title-based lookup for fields/subfields/topics needing text -------
   const candidates = await db
-    .select({ id: schema.nodes.id, title: schema.nodes.title })
+    .select({
+      id: schema.nodes.id,
+      title: schema.nodes.title,
+      summary: schema.nodes.summary,
+    })
     .from(schema.nodes)
     .where(
       and(
         isNull(schema.nodes.wikipediaUrl),
-        inArray(schema.nodes.type, ["field", "subfield"]),
+        inArray(schema.nodes.type, ["field", "subfield", "topic"]),
+        or(
+          isNull(schema.nodes.summary),
+          sql`length(trim(${schema.nodes.summary})) < 10`,
+          sql`trim(${schema.nodes.summary}) = trim(${schema.nodes.title})`,
+        ),
       ),
     );
-  console.log(`${candidates.length} fields/subfields without an article — trying title lookup`);
+  console.log(
+    `${candidates.length} fields/subfields/topics needing a description — trying title lookup`,
+  );
 
   // MSC titles are often lists ("Sequences, series, summability") — try the
   // full title first, then the first comma/semicolon-separated segment.
   const attemptsFor = (title: string): string[] => {
     const full = title.trim();
     const seg = title.split(/[;,]/)[0].trim();
-    return [...new Set([full, seg])].filter((t) => t.length > 3);
+    const braceFree = full.replace(/\s*\{[^}]*\}\s*/g, " ").replace(/\s+/g, " ").trim();
+    return [...new Set([full, seg, braceFree])].filter((t) => t.length > 3);
   };
 
   await fetchBatch(candidates.map((n) => attemptsFor(n.title)[0]).filter(Boolean));
@@ -258,7 +374,7 @@ async function main() {
         await db
           .update(schema.nodes)
           .set({
-            summary: s.extract,
+            summary: truncateExtract(s.extract),
             thumbnailUrl: s.thumbnail ?? null,
             wikipediaUrl: s.url ?? null,
           })
@@ -269,7 +385,7 @@ async function main() {
     }
   }
   persist();
-  console.log(`Found articles for ${found} additional fields/subfields`);
+  console.log(`Found articles for ${found} additional fields/subfields/topics`);
   console.log("Wikipedia ingestion complete.");
   process.exit(0);
 }
