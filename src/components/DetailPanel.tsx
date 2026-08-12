@@ -23,12 +23,44 @@ const RELATION_LABELS: Record<string, string> = {
   related: "Related",
 };
 
+interface ArxivPaperLite {
+  id: string;
+  title: string;
+  summary: string;
+  authors: string[];
+  published: string;
+  absUrl: string;
+  pdfUrl: string;
+  primaryCategory: string | null;
+}
+
+interface ArxivPayload {
+  papers: ArxivPaperLite[];
+  total: number;
+  searchUrl: string | null;
+  skipped?: boolean;
+  reason?: string;
+  error?: string;
+}
+
 interface Props {
   nodeId: string;
   onClose: () => void;
   onNavigate: (id: string) => void;
   userState: UserNodeStateLite | null | undefined;
   onStateChange: (patch: { mastery?: number; isProblemArea?: boolean }) => void;
+}
+
+function yearOf(iso: string): string {
+  if (!iso) return "";
+  const y = iso.slice(0, 4);
+  return /^\d{4}$/.test(y) ? y : "";
+}
+
+function authorLine(authors: string[]): string {
+  if (authors.length === 0) return "";
+  if (authors.length <= 2) return authors.join(", ");
+  return `${authors[0]} et al.`;
 }
 
 export default function DetailPanel({
@@ -40,10 +72,13 @@ export default function DetailPanel({
 }: Props) {
   const [detail, setDetail] = useState<NodeDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [papers, setPapers] = useState<ArxivPayload | null>(null);
+  const [papersLoading, setPapersLoading] = useState(false);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setPapers(null);
     fetch(`/api/node/${encodeURIComponent(nodeId)}`)
       .then((r) => r.json())
       .then((d) => {
@@ -57,6 +92,36 @@ export default function DetailPanel({
       alive = false;
     };
   }, [nodeId]);
+
+  useEffect(() => {
+    if (!detail?.id || detail.type === "branch") {
+      setPapers(null);
+      return;
+    }
+    let alive = true;
+    setPapersLoading(true);
+    fetch(`/api/arxiv?nodeId=${encodeURIComponent(detail.id)}&max=8`)
+      .then(async (r) => {
+        const body = (await r.json()) as ArxivPayload;
+        if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+        return body;
+      })
+      .then((d) => {
+        if (alive) {
+          setPapers(d);
+          setPapersLoading(false);
+        }
+      })
+      .catch(() => {
+        if (alive) {
+          setPapers({ papers: [], total: 0, searchUrl: null, error: "unavailable" });
+          setPapersLoading(false);
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [detail?.id, detail?.type]);
 
   const grouped = new Map<string, NodeDetail["connections"]>();
   for (const c of detail?.connections ?? []) {
@@ -145,7 +210,105 @@ export default function DetailPanel({
               zbMATH ↗
             </a>
           )}
+          {papers?.searchUrl && (
+            <a
+              href={papers.searchUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg bg-orange-500/15 px-2.5 py-1.5 text-orange-200 hover:bg-orange-500/25"
+            >
+              arXiv search ↗
+            </a>
+          )}
         </div>
+
+        {/* Live arXiv papers related to this node */}
+        {detail && detail.type !== "branch" && (
+          <div className="mb-4">
+            <div className="mb-1.5 flex items-baseline justify-between gap-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                Papers on arXiv
+                {papers && !papers.skipped && papers.total > 0
+                  ? ` · ${papers.total.toLocaleString()} hits`
+                  : ""}
+              </p>
+            </div>
+            <p className="mb-2 text-[11px] leading-snug text-slate-600">
+              Live keyword search — not curated peer review.
+            </p>
+            {papersLoading && (
+              <p className="text-sm text-slate-500">Searching arXiv…</p>
+            )}
+            {!papersLoading && papers?.skipped && (
+              <p className="text-sm italic text-slate-500">
+                {papers.reason ?? "No arXiv query for this node."}
+              </p>
+            )}
+            {!papersLoading && papers?.error && (
+              <p className="text-sm italic text-slate-500">
+                arXiv is temporarily unavailable.
+              </p>
+            )}
+            {!papersLoading &&
+              papers &&
+              !papers.skipped &&
+              !papers.error &&
+              papers.papers.length === 0 && (
+                <p className="text-sm italic text-slate-500">
+                  No matching preprints found.
+                </p>
+              )}
+            {!papersLoading && papers && papers.papers.length > 0 && (
+              <ul className="flex flex-col gap-2">
+                {papers.papers.map((p) => (
+                  <li
+                    key={p.id}
+                    className="rounded-lg border border-slate-700/40 bg-slate-800/30 px-2.5 py-2"
+                  >
+                    <a
+                      href={p.absUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block text-sm leading-snug text-slate-200 hover:text-orange-200"
+                    >
+                      {p.title}
+                    </a>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {authorLine(p.authors)}
+                      {yearOf(p.published)
+                        ? ` · ${yearOf(p.published)}`
+                        : ""}
+                      {p.primaryCategory ? ` · ${p.primaryCategory}` : ""}
+                    </p>
+                    {p.summary && (
+                      <p className="mt-1 line-clamp-2 text-xs leading-snug text-slate-500">
+                        {p.summary}
+                      </p>
+                    )}
+                    <div className="mt-1.5 flex gap-2 text-[11px]">
+                      <a
+                        href={p.absUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-orange-300/90 hover:text-orange-200"
+                      >
+                        Abstract
+                      </a>
+                      <a
+                        href={p.pdfUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-orange-300/90 hover:text-orange-200"
+                      >
+                        PDF
+                      </a>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         {/* mastery controls — persisted in localStorage */}
         <div className="mb-4 rounded-xl border border-slate-700/40 bg-slate-800/40 p-3">
