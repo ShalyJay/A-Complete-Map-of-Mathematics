@@ -695,6 +695,16 @@ const SEED_ENTITIES: {
     summary:
       "A tool for tracking locally defined data that glues consistently — central to algebraic geometry, topology, and modern category-theoretic mathematics.",
   },
+  {
+    // No Wikidata item; Wikipedia "G-conjecture" redirects to Simplicial sphere.
+    slug: "g-conjecture",
+    title: "g-conjecture",
+    type: "theorem",
+    msc: "52B05",
+    wiki: "https://en.wikipedia.org/wiki/G-conjecture",
+    summary:
+      "McMullen's characterization of the face numbers (f-vectors) of simplicial spheres — the g-theorem for polytopes, extended to spheres by Adiprasito in 2018.",
+  },
 ];
 
 const DEPENDENCIES: [dependent: string, prerequisite: string, note?: string][] = [
@@ -877,6 +887,7 @@ const DEPENDENCIES: [dependent: string, prerequisite: string, note?: string][] =
   ["Van der Waerden's theorem", "Hales–Jewett theorem", "Project combinatorial lines in a large cube onto arithmetic progressions of integers."],
   ["Cayley's formula", "Kirchhoff's theorem", "Evaluate the matrix-tree determinant for the complete graph to get n^(n−2)."],
   ["five color theorem", "Euler's polyhedron formula", "Euler's formula guarantees a vertex of degree at most 5, feeding the induction."],
+  ["g-conjecture", "upper bound theorem", "The upper bound theorem constrains the f-vector; the g-conjecture asks for the complete characterization via g-vectors."],
 
   // ---- logic & computability --------------------------------------------------
   ["Löb's theorem", "diagonal lemma", "The diagonal lemma constructs the sentence 'if I am provable then P' that drives the derivation."],
