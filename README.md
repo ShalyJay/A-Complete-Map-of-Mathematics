@@ -68,6 +68,8 @@ docker run -p 3000:3000 -v mathmap-data:/app/.data math-map
 | `npm run ingest:deps` | Curated dataset | Classic derivation chains (axiom → theorem → theorem) + seeds for famous results Wikidata misses |
 | `npm run ingest:wikipedia` | Wikipedia Action API | Summaries + thumbnails for nodes with articles; title lookup for fields, subfields, and topics |
 
+Related research papers are **not** ingested into the graph. Opening a node’s detail panel queries the [arXiv API](https://info.arxiv.org/help/api/user-manual.html) live (title/abstract phrase search, math-scoped) and lists Abstract / PDF links.
+
 Cached downloads live in `data/cache/` (gitignored).
 
 ## Document analysis
@@ -81,6 +83,7 @@ Analyses are stored in **browser localStorage** (not on the server). Two methods
 
 - Click a bubble to expand it: it pops out of its ring and its children fan out with room to breathe; multiple branches can be open at once
 - The selected bubble gets a bright ring + amber halo
+- The detail panel lists live **arXiv papers** related to the selected theorem, conjecture, or topic (title/abstract search scoped to math categories), with Abstract / PDF links and a full arXiv search shortcut
 - Hover a theorem to trace its derivation lineage; everything else dims
 - Clicking a theorem pins its chain — arrows and dimming persist until you click elsewhere
 - Derivation chains reach back to the axioms, even across collapsed branches
