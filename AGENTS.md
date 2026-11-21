@@ -10,6 +10,13 @@ Read this file before changing the repo. After any feature change, architecture 
 
 It is **not** a multi-user backend: the shared graph lives in PGlite / static JSON / optional Postgres; personal mastery and document analyses stay in browser `localStorage`.
 
+## Ambition (set 2026-11-21; method: [../AGENTS.md](../AGENTS.md#working-ambitiously))
+
+- **Outcome:** the graph stays correct and deployable without a manual smoke test.
+- **Hard target:** zero dangling or cyclic `depends-on` edges in `data/static-graph.json`, and zero curated deps silently skipped by `scripts/ingest-dependencies.ts` (current: unmeasured).
+- **Outside judge:** `npm run lint`, `npm run build`. To build: a validator over `data/static-graph.json` that also reports every skipped curated title.
+- **Borrow from:** library science: classification QA against MSC; data engineering: referential-integrity checks.
+
 ## Stack
 
 - TypeScript (strict), React 19, Next.js 16 App Router
