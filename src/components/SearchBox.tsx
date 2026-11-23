@@ -5,7 +5,9 @@ import Fuse from "fuse.js";
 import type { GraphNodeLite } from "@/lib/types";
 
 const TYPE_BADGES: Record<string, string> = {
+  domain: "Domain",
   branch: "Branch",
+  concept: "Concept",
   field: "Field",
   subfield: "Subfield",
   topic: "Topic",
@@ -27,6 +29,7 @@ function kindOf(n: GraphNodeLite): string {
 }
 
 const KIND_TAGS = [
+  { id: "concept", label: "Concepts" },
   { id: "axiom", label: "Axioms" },
   { id: "theorem", label: "Theorems" },
   { id: "lemma", label: "Lemmas" },
@@ -150,7 +153,7 @@ export default function SearchBox({ nodes, onPick }: Props) {
             setOpen(false);
           }
         }}
-        placeholder="Search theorems, fields, topics…"
+        placeholder="Search concepts, theorems, fields…"
         className="panel w-full rounded-xl px-4 py-2.5 text-sm outline-none placeholder:text-slate-500 focus:border-slate-500/40"
       />
       {open && (

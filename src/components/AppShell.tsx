@@ -16,7 +16,7 @@ import SearchBox from "./SearchBox";
 import Breadcrumbs from "./Breadcrumbs";
 import DetailPanel from "./DetailPanel";
 import DocumentsPanel from "./DocumentsPanel";
-import { GRAND_BRANCHES } from "@/lib/branches";
+import { DOMAINS } from "@/lib/branches";
 
 const MathMap = dynamic(() => import("./map/MathMap"), { ssr: false });
 const MathMap3D = dynamic(() => import("./map/MathMap3D"), { ssr: false });
@@ -109,7 +109,7 @@ export default function AppShell() {
   const goHome = useCallback(() => {
     setExpanded(new Set());
     setSelectedId(null);
-    setFocus({ id: GRAND_BRANCHES[0].id, nonce: ++nonce.current });
+    setFocus({ id: DOMAINS[0].id, nonce: ++nonce.current });
   }, []);
 
   const breadcrumbNavigate = useCallback(
@@ -150,13 +150,10 @@ export default function AppShell() {
           <p className="mb-2 font-semibold text-white">Couldn&apos;t load the map</p>
           <p className="mb-3 text-slate-400">{error}</p>
           <p className="text-slate-400">
-            Locally: run{" "}
-            <code className="rounded bg-slate-800 px-1.5 py-0.5">npm run ingest:all</code>{" "}
-            then reload. On Vercel: commit{" "}
-            <code className="rounded bg-slate-800 px-1.5 py-0.5">data/static-graph.json</code>{" "}
-            (from{" "}
-            <code className="rounded bg-slate-800 px-1.5 py-0.5">npm run export:graph</code>
-            ) and redeploy.
+            The graph comes from the Personal Wiki vault. Locally: run{" "}
+            <code className="rounded bg-slate-800 px-1.5 py-0.5">npm run sync:vault</code>{" "}
+            then reload; a deployment needs a committed{" "}
+            <code className="rounded bg-slate-800 px-1.5 py-0.5">data/vault/</code>.
           </p>
         </div>
       </div>
@@ -191,7 +188,7 @@ export default function AppShell() {
 
       {!payload && !error && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <p className="animate-pulse text-slate-400">Loading the map of mathematics…</p>
+          <p className="animate-pulse text-slate-400">Loading the map…</p>
         </div>
       )}
 
@@ -199,7 +196,9 @@ export default function AppShell() {
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-3">
             <h1 className="pointer-events-auto select-none text-lg font-bold tracking-tight text-white">
-              Map of <span className="text-blue-400">Mathematics</span>
+              A Complete Map of <span className="text-indigo-400">Math</span>,{" "}
+              <span className="text-amber-400">Physics</span> &amp;{" "}
+              <span className="text-emerald-400">CS</span>
             </h1>
             {payload && <SearchBox nodes={payload.nodes} onPick={navigateTo} />}
           </div>
@@ -257,8 +256,8 @@ export default function AppShell() {
       <div className="panel pointer-events-auto absolute bottom-4 left-4 z-10 rounded-xl p-3">
         {overlay === "none" ? (
           <div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-              {GRAND_BRANCHES.map((b) => (
+            <div className="flex flex-col gap-1.5">
+              {DOMAINS.map((b) => (
                 <button
                   key={b.id}
                   onClick={() => navigateTo(b.id)}
@@ -280,6 +279,10 @@ export default function AppShell() {
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-0.5 w-4 rounded bg-orange-400" />
                 builds on
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-0.5 w-4 rounded bg-emerald-400/60" />
+                bridge
               </span>
             </div>
           </div>
@@ -313,7 +316,7 @@ export default function AppShell() {
       <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 text-xs text-slate-500">
         {is3D
           ? "Drag to rotate · shift-drag or ⌘-drag to pan · scroll to zoom · click bubbles to expand"
-          : "Click to explore · click a theorem to pin its derivation chain · scroll to zoom"}
+          : "Click to explore · click a concept to pin its prerequisite chain · scroll to zoom"}
       </div>
 
       <div className="absolute bottom-4 right-4 top-20 z-10 flex gap-3">

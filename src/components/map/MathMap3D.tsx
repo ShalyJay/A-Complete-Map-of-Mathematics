@@ -3,13 +3,14 @@
 /**
  * 3D render of the map: a navigable space you can rotate and zoom freely.
  *
- * The 8 grand branches share a sphere, staggered alternately above and below
+ * The three domain roots share a sphere, staggered alternately above and below
  * the equator; expanding a bubble fans its children across a spherical cap
  * around its outward direction, so open sections spread into the z axis as
  * well as x/y. Axioms sit on inner shells,
  * theorems on outer shells by derivation level, and dependency arrows are 3D
  * chords through the space. Orbit to rotate, scroll to zoom, right-drag to pan.
  */
+import { isLeafType } from "@/lib/nodeKinds";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -33,7 +34,8 @@ interface Props {
 }
 
 /** camera distance when focusing a node of the given depth */
-const ZOOM_DIST: Record<number, number> = { 0: 1450, 1: 1000, 2: 720, 3: 520, 4: 380 };
+const ZOOM_DIST: Record<number, number> = { 0: 1500, 1: 1100, 2: 850, 3: 640, 4: 480, 5: 380, 6: 320 };
+const ZOOM_MAX_DEPTH = 6;
 const HOME_DIST = 1500;
 const DIM_COLOR = "#1c2738";
 /** bubbles at least this big carry their label on the sphere itself */
@@ -431,7 +433,7 @@ function Scene({
       d.dist = HOME_DIST;
     } else {
       d.target.set(t.x, t.y, t.z);
-      d.dist = ZOOM_DIST[Math.min(n.depth, 4)] ?? 600;
+      d.dist = ZOOM_DIST[Math.min(n.depth, ZOOM_MAX_DEPTH)] ?? 600;
       // the detail panel covers the right side of the screen — shift the
       // camera target screen-right so the focused node lands left of it
       if (selectedRef.current) {
@@ -502,7 +504,7 @@ function Scene({
     (id: string) => {
       const n = index.byId.get(id);
       if (!n) return;
-      if (n.childCount > 0 && n.depth < 4) {
+      if (n.childCount > 0 && !isLeafType(n.type)) {
         onToggleRef.current(id);
         onSelectRef.current(id);
       } else {
@@ -557,7 +559,7 @@ function Scene({
       {nodes.map((nd) => {
         const dimmed = traceActive && !inTrace(nd.id);
         const highlighted = traceActive && inTrace(nd.id);
-        const taxonomyLabel = nd.depth < 4 && (nd.size >= INSIDE_LABEL_SIZE || expanded.has(nd.id));
+        const taxonomyLabel = !isLeafType(nd.type) && (nd.size >= INSIDE_LABEL_SIZE || expanded.has(nd.id));
         const showLabel =
           taxonomyLabel || highlighted || nd.id === selectedId || nd.id === hoverId;
         return (

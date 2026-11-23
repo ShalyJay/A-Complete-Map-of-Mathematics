@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import "katex/dist/katex.min.css";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
-  title: "Map of Mathematics",
+  title: "A Complete Map of Math, Physics & CS",
   description:
-    "An explorable, zoomable knowledge graph of all of mathematics — from grand branches down to individual theorems, powered by MSC 2020, Wikidata, and Wikipedia.",
+    "An explorable, zoomable knowledge graph of mathematics, physics and computer science, from domains and subject maps down to individual concepts and theorems, generated from a curated Obsidian research vault (MSC 2020 for mathematics).",
 };
 
 export default function RootLayout({

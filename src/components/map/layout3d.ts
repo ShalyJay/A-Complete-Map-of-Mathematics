@@ -1,4 +1,5 @@
 import type { NodeIndex } from "./graphStore";
+import { isLeafType } from "@/lib/nodeKinds";
 import { orderBranches } from "./layout";
 
 /**
@@ -30,7 +31,7 @@ export const RADII3 = {
   /** how far an expanded bubble pops out of its ring */
   pop: 90,
   /** shell radius for the children of an expanded node, by parent depth */
-  childShell: [640, 900, 1110, 1280] as number[],
+  childShell: [640, 900, 1110, 1280, 1420, 1550] as number[],
   /** ghost shells for revealed dependency-chain nodes (axiom = center) */
   ghostBase: 110,
   ghostStep: 140,
@@ -43,7 +44,7 @@ export const RADII3 = {
 export const BRANCH_TILT = 0.5;
 
 /** half-angle of the children cap, by parent depth */
-const CAP = [1.05, 0.78, 0.6, 0.48];
+const CAP = [1.05, 0.78, 0.6, 0.48, 0.4, 0.34];
 /** desired spacing between leaf entities on a shell (world units) */
 const ENTITY_SPACING = 60;
 const ENTITY_SHELL_GAP = 130;
@@ -196,10 +197,10 @@ export function computeLayout3D(
     const shell = RADII3.childShell[Math.min(depth, RADII3.childShell.length - 1)];
     const cap = Math.min(CAP[Math.min(depth, CAP.length - 1)], allowedCap);
 
-    const taxonomy = kids.filter((k) => (index.byId.get(k)?.depth ?? 4) < 4);
+    const taxonomy = kids.filter((k) => !isLeafType(index.byId.get(k)?.type));
     const axioms = kids.filter((k) => index.byId.get(k)?.type === "axiom");
     const entities = kids
-      .filter((k) => (index.byId.get(k)?.depth ?? 4) >= 4 && index.byId.get(k)?.type !== "axiom")
+      .filter((k) => isLeafType(index.byId.get(k)?.type) && index.byId.get(k)?.type !== "axiom")
       .sort((a, b) => entitySort(a) - entitySort(b));
 
     // axioms hug an inner shell — foundations point toward the origin

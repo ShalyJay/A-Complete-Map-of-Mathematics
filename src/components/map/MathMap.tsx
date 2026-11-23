@@ -29,7 +29,8 @@ interface Props {
 }
 
 /** camera span (graph units) when focusing a node of the given depth */
-const ZOOM_SPAN: Record<number, number> = { 0: 1800, 1: 1250, 2: 950, 3: 700, 4: 450 };
+const ZOOM_SPAN: Record<number, number> = { 0: 1900, 1: 1400, 2: 1100, 3: 850, 4: 650, 5: 480, 6: 380 };
+const ZOOM_MAX_DEPTH = 6;
 const DIM_COLOR = "rgba(51,65,85,0.35)";
 const ANIM_MS = 500;
 /** bubbles at least this big get their label drawn inside the circle */
@@ -695,7 +696,7 @@ export default function MathMap({
         cx = midR * Math.cos(angle);
         cy = midR * Math.sin(angle);
       }
-      const span = ZOOM_SPAN[Math.min(isExpanded ? depth + 1 : depth + 2, 4)] ?? 450;
+      const span = ZOOM_SPAN[Math.min(isExpanded ? depth + 1 : depth + 2, ZOOM_MAX_DEPTH)] ?? 450;
       // the detail panel covers the right ~35% of the screen; nudge the camera
       // right so the focused content lands in the uncovered area
       if (selectedId) cx += span * 0.18;

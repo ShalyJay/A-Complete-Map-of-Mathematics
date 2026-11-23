@@ -1,80 +1,41 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { getDb, schema } from "@/db";
-import { searchArxiv } from "@/lib/arxiv";
-import {
-  shouldUseStaticGraph,
-  staticGraphRequiredMessage,
-} from "@/lib/graphAccess";
-import { hasStaticGraph, loadStaticGraph } from "@/lib/staticGraph";
+import { searchArxiv, type ArxivScope } from "@/lib/arxiv";
+import { hasStaticGraph, loadStaticGraph, missingGraphMessage } from "@/lib/staticGraph";
 
 export const dynamic = "force-dynamic";
 
-async function resolveNode(
-  id: string,
-): Promise<{ title: string; type: string } | null> {
-  if (shouldUseStaticGraph() || hasStaticGraph()) {
-    try {
-      const g = loadStaticGraph();
-      const n = g.nodes.find((x) => x.id === id);
-      if (n) return { title: n.title, type: n.type };
-    } catch {
-      /* fall through to DB */
-    }
-  }
-  if (shouldUseStaticGraph() && !hasStaticGraph()) return null;
-
-  try {
-    const db = await getDb();
-    const [node] = await db
-      .select({ title: schema.nodes.title, type: schema.nodes.type })
-      .from(schema.nodes)
-      .where(eq(schema.nodes.id, id))
-      .limit(1);
-    return node ?? null;
-  } catch {
-    return null;
-  }
+function resolveNode(id: string): { title: string; type: string; scope: ArxivScope } | null {
+  const n = loadStaticGraph().byId.get(id);
+  return n ? { title: n.title, type: n.type, scope: { domain: n.domain, arxiv: n.codes.arxiv ?? null } } : null;
 }
 
 /**
  * GET /api/arxiv?nodeId=wd:Q…   — papers related to a map node
- * GET /api/arxiv?q=…&type=theorem — free-form (debug / future use)
+ * GET /api/arxiv?q=…&type=theorem&domain=physics — free-form (debug / future use)
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const nodeId = url.searchParams.get("nodeId");
   const q = url.searchParams.get("q");
-  const typeParam = url.searchParams.get("type") ?? "topic";
   const max = Number(url.searchParams.get("max") ?? "8");
 
   try {
-    let title: string | null = null;
-    let type = typeParam;
+    let title: string;
+    let type = url.searchParams.get("type") ?? "topic";
+    let scope: ArxivScope = { domain: (url.searchParams.get("domain") as ArxivScope["domain"]) ?? "math" };
 
     if (nodeId) {
-      const node = await resolveNode(decodeURIComponent(nodeId));
-      if (!node) {
-        if (shouldUseStaticGraph() && !hasStaticGraph()) {
-          return NextResponse.json(
-            { error: staticGraphRequiredMessage() },
-            { status: 503 },
-          );
-        }
-        return NextResponse.json({ error: "node not found" }, { status: 404 });
-      }
-      title = node.title;
-      type = node.type;
+      if (!hasStaticGraph()) return NextResponse.json({ error: missingGraphMessage() }, { status: 503 });
+      const node = resolveNode(decodeURIComponent(nodeId));
+      if (!node) return NextResponse.json({ error: "node not found" }, { status: 404 });
+      ({ title, type, scope } = node);
     } else if (q) {
       title = q;
     } else {
-      return NextResponse.json(
-        { error: "nodeId or q required" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "nodeId or q required" }, { status: 400 });
     }
 
-    const result = await searchArxiv({ title, type, maxResults: max });
+    const result = await searchArxiv({ title, type, scope, maxResults: max });
     if (!result) {
       return NextResponse.json(
         {
@@ -88,7 +49,6 @@ export async function GET(req: Request) {
         { headers: { "Cache-Control": "public, max-age=3600" } },
       );
     }
-
     return NextResponse.json(
       { ...result, skipped: false },
       {

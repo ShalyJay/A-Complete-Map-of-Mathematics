@@ -131,7 +131,7 @@ export default function DocumentsPanel({
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Putnam 2023"
+                placeholder="e.g. Putnam 2023, QFT problem set"
                 className="mt-1 w-full rounded-lg border border-slate-700/60 bg-slate-800/60 px-3 py-2 text-sm outline-none"
               />
             </label>

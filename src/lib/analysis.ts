@@ -1,8 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { inArray } from "drizzle-orm";
-import { getDb, schema } from "@/db";
-import { shouldUseStaticGraph } from "@/lib/graphAccess";
-import { hasStaticGraph, staticAllNodes } from "@/lib/staticGraph";
+import { staticAllNodes } from "@/lib/staticGraph";
 import { extractPhrases } from "@/lib/nlp/phrases";
 import { cosine, embedTexts, ensureNodeIndex } from "@/lib/nlp/embeddings";
 
@@ -15,60 +12,17 @@ type NodeRow = {
 };
 
 async function loadNodesByTypes(types: string[]): Promise<NodeRow[]> {
-  if (shouldUseStaticGraph() || (!(await canUseDb()) && hasStaticGraph())) {
-    return staticAllNodes()
-      .filter((n) => types.includes(n.type))
-      .map((n) => ({
-        id: n.id,
-        title: n.title,
-        type: n.type,
-        mscCode: n.mscCode,
-        parentId: n.parentId,
-      }));
-  }
-  const db = await getDb();
-  return db
-    .select({
-      id: schema.nodes.id,
-      title: schema.nodes.title,
-      type: schema.nodes.type,
-      mscCode: schema.nodes.mscCode,
-      parentId: schema.nodes.parentId,
-    })
-    .from(schema.nodes)
-    .where(inArray(schema.nodes.type, types));
+  return (await loadAllNodesLite()).filter((n) => types.includes(n.type));
 }
 
 async function loadAllNodesLite(): Promise<NodeRow[]> {
-  if (shouldUseStaticGraph() || (!(await canUseDb()) && hasStaticGraph())) {
-    return staticAllNodes().map((n) => ({
-      id: n.id,
-      title: n.title,
-      type: n.type,
-      mscCode: n.mscCode,
-      parentId: n.parentId,
-    }));
-  }
-  const db = await getDb();
-  return db
-    .select({
-      id: schema.nodes.id,
-      title: schema.nodes.title,
-      type: schema.nodes.type,
-      mscCode: schema.nodes.mscCode,
-      parentId: schema.nodes.parentId,
-    })
-    .from(schema.nodes);
-}
-
-async function canUseDb(): Promise<boolean> {
-  if (shouldUseStaticGraph()) return false;
-  try {
-    await getDb();
-    return true;
-  } catch {
-    return false;
-  }
+  return staticAllNodes().map((n) => ({
+    id: n.id,
+    title: n.title,
+    type: n.type,
+    mscCode: n.mscCode,
+    parentId: n.parentId,
+  }));
 }
 
 export interface Classification {
@@ -198,6 +152,7 @@ const LEVEL_BOOST: Record<string, number> = {
   field: 0.7,
   subfield: 1.0,
   topic: 1.25,
+  concept: 1.5,
   theorem: 1.6,
   axiom: 1.6,
   conjecture: 1.6,
@@ -218,6 +173,7 @@ export async function classifyByKeywords(text: string): Promise<Classification[]
     "field",
     "subfield",
     "topic",
+    "concept",
     "theorem",
     "axiom",
     "conjecture",
@@ -257,7 +213,7 @@ export async function classifyByKeywords(text: string): Promise<Classification[]
       if (
         count === 0 &&
         (phrase.includes(" ") ||
-          ["theorem", "axiom", "conjecture", "definition"].includes(n.type))
+          ["concept", "theorem", "axiom", "conjecture", "definition"].includes(n.type))
       ) {
         count = (docLower.match(phraseRegex(phrase)) ?? []).length;
       }
@@ -385,12 +341,19 @@ export async function classifyByKeywords(text: string): Promise<Classification[]
 // LLM classification (optional — needs an Anthropic API key)
 // ---------------------------------------------------------------------------
 
-/** Taxonomy prompt: all MSC fields + subfields (~600 lines). */
+/**
+ * Taxonomy prompt: field and subfield maps of all three domains (~1,600 lines). Mathematics rows
+ * carry their MSC 2020 code; physics and CS rows carry the map id (e.g. "physics:condensed.collective").
+ * Rows are grouped under their parent field, so subfields follow the field they belong to.
+ */
 async function buildTaxonomy(): Promise<string> {
   const rows = await loadNodesByTypes(["field", "subfield"]);
-  rows.sort((a, b) => ((a.mscCode ?? "") < (b.mscCode ?? "") ? -1 : 1));
-  return rows
-    .map((r) => `${r.mscCode} ${r.type === "field" ? "" : "  "}${r.title}`)
+  const code = (r: NodeRow) => r.mscCode ?? r.id;
+  const fields = rows.filter((r) => r.type === "field").sort((a, b) => (code(a) < code(b) ? -1 : 1));
+  const subs = new Map<string, NodeRow[]>();
+  for (const r of rows) if (r.type === "subfield" && r.parentId) subs.set(r.parentId, [...(subs.get(r.parentId) ?? []), r]);
+  return fields
+    .flatMap((f) => [`${code(f)} ${f.title}`, ...(subs.get(f.id) ?? []).sort((a, b) => (code(a) < code(b) ? -1 : 1)).map((s) => `${code(s)}   ${s.title}`)])
     .join("\n");
 }
 
@@ -418,17 +381,17 @@ export async function classifyDocument(
   const response = await client.messages.create({
     model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
     max_tokens: 4000,
-    system: `You classify mathematical documents against the Mathematics Subject Classification (MSC 2020). Given a document, identify which areas of mathematics it covers.
+    system: `You classify documents in mathematics, physics and computer science against a subject taxonomy: the Mathematics Subject Classification (MSC 2020) for mathematics, and subject maps (ids like "physics:..." and "cs:...") for physics and CS. Given a document, identify which areas it covers.
 
-Here is the taxonomy (code, then title; two-space indented rows are subfields of the field above them):
+Here is the taxonomy (code or id, then title; indented rows are subfields of the field above them):
 
 ${taxonomy}
 
 Respond with ONLY a JSON array, no other text. Each element:
-{"code": "<MSC code from the taxonomy>", "weight": <0-1, how central this area is to the document>, "rationale": "<one short sentence: why>"}
+{"code": "<code or id from the taxonomy>", "weight": <0-1, how central this area is to the document>, "rationale": "<one short sentence: why>"}
 
 Rules:
-- Prefer the most specific subfield codes (e.g. "11Axx") when clear; use field codes ("11-XX") when the document covers the field broadly.
+- Prefer the most specific subfield codes (e.g. "11Axx") when clear; use field codes ("11-XX") when the document covers the field broadly. The same applies to physics and CS ids.
 - 5-25 entries. Weight 1.0 = the document is centrally about this area; 0.2 = touched briefly.
 - Only use codes that appear in the taxonomy.`,
     messages: [
@@ -495,6 +458,7 @@ export async function resolveClassifications(
       ? byId.get(c.nodeId)
       : c.code
         ? (byCode.get(c.code) ??
+          byId.get(c.code) ??
           byCode.get(c.code.toUpperCase()) ??
           byCode.get(`${c.code.slice(0, 2)}-XX`))
         : undefined;
