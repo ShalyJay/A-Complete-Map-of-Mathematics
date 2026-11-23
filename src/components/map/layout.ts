@@ -1,10 +1,11 @@
 import type { NodeIndex } from "./graphStore";
+import { isLeafType } from "@/lib/nodeKinds";
 
 /**
  * Expansion-driven radial layout.
  *
- * The 8 grand branches sit as large labeled bubbles on a ring around the
- * center. Expanding a node "pops" it slightly outward and fans its children
+ * The three domain roots (Mathematics, Physics, Computer Science & AI) sit as
+ * large labeled bubbles on a ring around the center. Expanding a node "pops" it slightly outward and fans its children
  * across a generous arc one ring further out, so the open section fills the
  * free space. Several sections can be open at once: each expanded node's fan
  * is clamped so it doesn't invade the arc of its nearest expanded sibling.
@@ -22,18 +23,18 @@ export const RADII = {
   /** how far an expanded bubble pops out of its ring */
   pop: 80,
   /** ring radius for the children of an expanded node, by parent depth */
-  childRing: [660, 920, 1130, 1300] as number[],
+  childRing: [660, 920, 1130, 1300, 1450, 1590] as number[],
   /** ghost rings for revealed dependency-chain nodes (axiom = center) */
   ghostBase: 120,
   ghostStep: 150,
-  max: 1500,
+  max: 1750,
 };
 
 /** angular span for the children fan, by parent depth */
-const CHILD_SPAN = [2.4, 1.7, 1.3, 1.0];
+const CHILD_SPAN = [2.4, 1.7, 1.3, 1.0, 0.85, 0.75];
 /** arc spacing between sibling bubbles (graph units), by child depth-ish */
-const SPACING = [0, 135, 95, 65, 46];
-const ROW_GAP = [0, 130, 95, 70, 55];
+const SPACING = [0, 120, 95, 65, 46, 40, 36];
+const ROW_GAP = [0, 120, 95, 70, 55, 48, 42];
 
 export interface LayoutResult {
   positions: Map<string, { x: number; y: number }>;
@@ -195,10 +196,10 @@ export function computeLayout(
     const span = Math.min(CHILD_SPAN[Math.min(depth, CHILD_SPAN.length - 1)], allowedSpan);
 
     // taxonomy children (fields/subfields/topics) vs leaf entities
-    const taxonomy = kids.filter((k) => (index.byId.get(k)?.depth ?? 4) < 4);
+    const taxonomy = kids.filter((k) => !isLeafType(index.byId.get(k)?.type));
     const axioms = kids.filter((k) => index.byId.get(k)?.type === "axiom");
     const entities = kids
-      .filter((k) => (index.byId.get(k)?.depth ?? 4) >= 4 && index.byId.get(k)?.type !== "axiom")
+      .filter((k) => isLeafType(index.byId.get(k)?.type) && index.byId.get(k)?.type !== "axiom")
       .sort((a, b) => entitySort(a) - entitySort(b));
 
     const childDepth = Math.min(depth + 1, SPACING.length - 1);

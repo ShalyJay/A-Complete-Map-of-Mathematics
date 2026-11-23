@@ -1,34 +1,25 @@
-# Map of Mathematics
+# A Complete Map of Math, Physics & CS
 
-An explorable knowledge graph of mathematics — grand branches down to theorems — built from MSC 2020, Wikidata, and Wikipedia. Mark personal mastery and upload papers/exams for a coverage heatmap. Everything personal stays in your browser; the math graph lives in a local embedded database.
+An explorable knowledge graph of mathematics, physics and computer science: three domains, their branches and subject maps (MSC 2020 fields, subfields and topics for mathematics), down to concepts and named theorems, with prerequisite chains, cross-subject bridges and verified reference notes. Mark personal mastery and upload papers/exams for a coverage heatmap. Everything personal stays in your browser.
 
-The map is a ring of 8 large branch bubbles with labels inside (branches that wrap a single MSC field, like Number Theory (11-XX) and Discrete Mathematics (05-XX), show the MSC code right on the branch bubble). Clicking a branch **pops it out of the ring** and fans its fields across the free space; each deeper level (field → subfield → topic) fans further outward. Several branches can be open at once — each fan is clamped so it never invades its expanded neighbor's arc. Within a section, **axioms hug the inner arc** (foundations point toward the center), theorems fan outward by derivation depth, and conjectures sit on the outermost row. Derivation arrows are drawn **above** the bubbles. Hover a theorem to trace its lineage; clicking one **pins** the full chain back to the axioms (it stays lit when the mouse moves away) — chain members from other branches appear on inner ghost rings, axioms nearest the center, so cross-branch dependencies read as chords.
+The graph is generated from a curated Obsidian research vault (the "Personal Wiki"): `data/vault/` is its public taxonomy export, refreshed automatically whenever the vault changes. Questions, research notes and anything personal in the vault are never exported.
 
-Computer science (MSC 68), information theory (94), and mathematical physics (70–86) are included under the Applied & Computational branch.
+The map is a ring of three large domain bubbles. Clicking one **pops it out of the ring** and fans its branches across the free space; each deeper level fans further outward, and several sections can be open at once. Within a section, **axioms hug the inner arc**, results fan outward by prerequisite depth, and conjectures sit on the outermost row. Hover a concept to trace its prerequisites; clicking one **pins** the chain; chain members from other areas appear on inner ghost rings.
 
 ## Quick start
 
 ```bash
 npm install
-npm run db:ensure        # create local PGlite graph tables
-npm run ingest:all       # MSC + Wikidata + Wikipedia (~a few minutes; Wikidata needs network)
-npm run export:graph     # write data/static-graph.json (needed for Vercel)
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). To refresh the graph from a local copy of the vault: `VAULT_DIR=/path/to/vault npm run sync:vault`.
 
 Copy `.env.example` to `.env.local` only if you want a server-side Anthropic key for AI document analysis.
 
-## Deploy on Vercel
+## Deploy
 
-Vercel serverless cannot use the local PGlite database (`.data/` is gitignored). Serve the map from a committed static export instead:
-
-1. Locally after ingest: `npm run export:graph`
-2. Commit `data/static-graph.json` (not under `data/cache/`, so it is tracked)
-3. Push and redeploy
-
-On Vercel the API reads that file automatically (`VERCEL=1`). Alternatives: set `DATABASE_URL` to a hosted Postgres with the graph seeded, or set `USE_STATIC_GRAPH=1` to force the static path locally.
+The API reads the committed `data/vault/` files, so any Node host works (Vercel included); `npm run build` validates the graph first and fails on a broken export.
 
 ## Run with Docker
 
@@ -36,61 +27,47 @@ On Vercel the API reads that file automatically (`VERCEL=1`). Alternatives: set 
 docker compose up --build
 ```
 
-First start seeds the graph automatically (MSC taxonomy + Wikidata theorems, ~2 min).
-Data persists in the `mathmap-data` volume. Options via environment variables:
-
-- `AUTO_INGEST=full` — also fetch Wikipedia summaries/thumbnails on first run (~15 min extra, Wikipedia rate-limits)
-- `AUTO_INGEST=none` — skip seeding
-- `ANTHROPIC_API_KEY=sk-ant-…` — enable AI document analysis without pasting a key in the UI
-
-Or without compose:
-
-```bash
-docker build -t math-map .
-docker run -p 3000:3000 -v mathmap-data:/app/.data math-map
-```
+Optional: `ANTHROPIC_API_KEY=sk-ant-…` enables AI document analysis without pasting a key in the UI.
 
 ## Stack
 
 - **Next.js** App Router + TypeScript
-- **PGlite** (embedded Postgres in `.data/pglite`) for the math graph only
+- **Vault export** (`data/vault/`) as the only graph source; no database
 - **localStorage** for mastery ratings and document analyses
-- **Drizzle ORM**
 - **Sigma.js** / Graphology (2D) and three.js / react-three-fiber (3D)
-- **Anthropic API** (optional) for document → MSC classification
+- **Anthropic API** (optional) for document → subject classification
 
-## Ingestion
+## Where the data comes from
 
-| Script | Source | What it adds |
-|--------|--------|--------------|
-| `npm run ingest:msc` | [MSC 2020 SKOS](https://github.com/TIBHannover/MSC2020_SKOS) Turtle | Grand branches, fields, subfields, topics + see-also edges (CS/info theory/math physics under Applied) |
-| `npm run ingest:wikidata` | Wikidata SPARQL | Theorems, axioms, conjectures as leaf nodes + sparse dependency links |
-| `npm run ingest:deps` | Curated dataset | Classic derivation chains (axiom → theorem → theorem) + seeds for famous results Wikidata misses |
-| `npm run ingest:wikipedia` | Wikipedia Action API | Summaries + thumbnails for nodes with articles; title lookup for fields, subfields, and topics |
+| Source | Lives in the vault as | What the site shows |
+|--------|----------------------|---------------------|
+| Vault subject maps (math, physics, CS) | `_tools/taxonomy/*_structure.yaml` + map notes | Domains, branches, fields/sections, subfields/subsections |
+| [MSC 2020](https://msc2020.org/) | `msc2020.yaml`, `msc2020_topics.yaml` | MSC codes, topics and their see-also references |
+| Vault concepts and imported results (Wikidata, curated seeds) | `math.yaml`, `math_results.yaml`, `physics.yaml`, `cs.yaml` + concept notes | Concepts and named results, prerequisites (independently verified), typed connections |
+| Vault bridges and principles | `bridges.yaml`, `principles.yaml` | Cross-subject bridges with the principle they share and a source |
+| Verified research blocks | `## Reference` sections with a `verified` date | The detail panel's Reference section (with LaTeX) |
 
-Related research papers are **not** ingested into the graph. Opening a node’s detail panel queries the [arXiv API](https://info.arxiv.org/help/api/user-manual.html) live (title/abstract phrase search, math-scoped) and lists Abstract / PDF links.
-
-Cached downloads live in `data/cache/` (gitignored).
+Related research papers are **not** part of the graph. Opening a node’s detail panel queries the [arXiv API](https://info.arxiv.org/help/api/user-manual.html) live (title/abstract phrase search, scoped to the node's arXiv category or domain) and lists Abstract / PDF links.
 
 ## Document analysis
 
 Analyses are stored in **browser localStorage** (not on the server). Two methods:
 
-- **Local NLP** (default) — extracts noun phrases with [`compromise`](https://github.com/spencermountain/compromise), then ranks MSC nodes with a tiny local embedding model ([`Xenova/all-MiniLM-L6-v2`](https://huggingface.co/Xenova/all-MiniLM-L6-v2) via [`@xenova/transformers`](https://www.npmjs.com/package/@xenova/transformers)). Offline after the first ~23 MB model download into `.data/hf-cache/`; node vectors cache in `.data/cache/node-embeddings.json`.
-- **AI (Claude)** — semantic classification against the MSC taxonomy via the Anthropic API. Paste an API key in the form (used per-request, never stored) or set `ANTHROPIC_API_KEY` on the server.
+- **Local NLP** (default) — extracts noun phrases with [`compromise`](https://github.com/spencermountain/compromise), then ranks taxonomy nodes with a tiny local embedding model ([`Xenova/all-MiniLM-L6-v2`](https://huggingface.co/Xenova/all-MiniLM-L6-v2) via [`@xenova/transformers`](https://www.npmjs.com/package/@xenova/transformers)). Offline after the first ~23 MB model download into `.data/hf-cache/`; node vectors cache in `.data/cache/node-embeddings.json`.
+- **AI (Claude)** — semantic classification against the subject taxonomy (MSC 2020 for mathematics) via the Anthropic API. Paste an API key in the form (used per-request, never stored) or set `ANTHROPIC_API_KEY` on the server.
 
 ## Map controls
 
 - Click a bubble to expand it: it pops out of its ring and its children fan out with room to breathe; multiple branches can be open at once
 - The selected bubble gets a bright ring + amber halo
-- The detail panel lists live **arXiv papers** related to the selected theorem, conjecture, or topic (title/abstract search scoped to math categories), with Abstract / PDF links and a full arXiv search shortcut
+- The detail panel lists live **arXiv papers** related to the selected theorem, conjecture, or topic (title/abstract search scoped to the node's category), with Abstract / PDF links and a full arXiv search shortcut
 - Hover a theorem to trace its derivation lineage; everything else dims
 - Clicking a theorem pins its chain — arrows and dimming persist until you click elsewhere
 - Derivation chains reach back to the axioms, even across collapsed branches
 - Search jumps the camera and opens the ancestry path; tag chips filter by kind (axioms, theorems, lemmas, inequalities, conjectures, topics) and by branch — pick a tag with no query to browse everything under it
 - Collapsed sections still show their interdependencies: hidden dependency endpoints roll up to the nearest visible bubble as aggregated orange arcs (thicker = more underlying links)
-- Every node has a description: MSC topics without a scope note or Wikipedia page get one synthesized from their position, subtopics, and attached results
-- Every connection is explained: the detail card lists each link under "Builds on" / "Leads to" / "See also" with a one-line note saying *why* the two results are connected (curated proof sketches for the derivation edges, synthesized text otherwise)
+- Every node has a description: the vault's summary, Wikipedia's intro (labelled), or one synthesized from its position and contents; verified Reference notes render with LaTeX
+- Connections are grouped by kind: prerequisites (with the verified reason), bridges to other subjects (with the shared principle and a source), the vault's typed connections, and MSC see-also references
 - **3D mode (default)**: the map renders as a navigable space (three.js / react-three-fiber) — drag to rotate, scroll to zoom, right-drag to pan. Expanding a bubble fans its children across a spherical cap around its outward direction, so open sections spread into the z axis too. Axioms sit on inner shells, theorems on outer shells by derivation level, and dependency chords arc through the space. The 2D radial map is one toggle away in the top-right corner
 - **Mastery** overlay: green mastered → red problem areas → gray unexplored (saved in this browser)
 - **Documents**: upload PDF/text → local NLP or AI analysis → orange coverage heatmap (saved in this browser)

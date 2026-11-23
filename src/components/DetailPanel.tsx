@@ -1,10 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import type { NodeDetail, UserNodeStateLite } from "@/lib/types";
 
 const TYPE_STYLES: Record<string, string> = {
+  domain: "bg-indigo-500/20 text-indigo-300",
   branch: "bg-violet-500/20 text-violet-300",
+  concept: "bg-sky-500/20 text-sky-300",
   field: "bg-blue-500/20 text-blue-300",
   subfield: "bg-cyan-500/20 text-cyan-300",
   topic: "bg-teal-500/20 text-teal-300",
@@ -15,13 +20,46 @@ const TYPE_STYLES: Record<string, string> = {
 };
 
 const RELATION_LABELS: Record<string, string> = {
-  "builds-on": "Builds on",
-  "leads-to": "Leads to",
+  bridge: "Bridges to other subjects",
+  "builds-on": "Prerequisites",
+  "leads-to": "Prerequisite for",
   parent: "Part of",
   child: "Contains",
   "see-also": "See also",
   related: "Related",
 };
+
+/** Reference blocks link other nodes as `node:<id>`; keep that scheme, sanitize the rest. */
+const urlTransform = (url: string) => (url.startsWith("node:") ? url : defaultUrlTransform(url));
+
+function Reference({ markdown, onNavigate }: { markdown: string; onNavigate: (id: string) => void }) {
+  return (
+    <div className="reference text-sm leading-relaxed text-slate-300">
+      <ReactMarkdown
+        remarkPlugins={[remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        urlTransform={urlTransform}
+        components={{
+          a: ({ href, children }) =>
+            href?.startsWith("node:") ? (
+              <button
+                onClick={() => onNavigate(decodeURIComponent(href.slice(5)))}
+                className="text-sky-300 hover:text-sky-200 hover:underline"
+              >
+                {children}
+              </button>
+            ) : (
+              <a href={href} target="_blank" rel="noreferrer" className="text-sky-300/90 hover:text-sky-200">
+                {children}
+              </a>
+            ),
+        }}
+      >
+        {markdown}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 interface ArxivPaperLite {
   id: string;
@@ -94,7 +132,7 @@ export default function DetailPanel({
   }, [nodeId]);
 
   useEffect(() => {
-    if (!detail?.id || detail.type === "branch") {
+    if (!detail?.id || detail.type === "branch" || detail.type === "domain") {
       setPapers(null);
       return;
     }
@@ -143,6 +181,8 @@ export default function DetailPanel({
             >
               {detail.type}
               {detail.mscCode ? ` · MSC ${detail.mscCode}` : ""}
+              {detail.codes?.arxiv ? ` · ${detail.codes.arxiv}` : ""}
+              {detail.codes?.acm ? ` · ACM ${detail.codes.acm}` : ""}
             </span>
           )}
           <h2 className="text-lg font-semibold leading-snug">
@@ -171,12 +211,31 @@ export default function DetailPanel({
         )}
 
         {detail?.summary && (
-          <p className="mb-4 text-sm leading-relaxed text-slate-300">{detail.summary}</p>
+          <p className="mb-3 text-sm leading-relaxed text-slate-300">{detail.summary}</p>
         )}
-        {detail && !detail.summary && !loading && (
+        {detail?.wikipediaExtract && (
+          <blockquote className="mb-3 border-l-2 border-slate-600 pl-3 text-sm leading-relaxed text-slate-400">
+            {detail.wikipediaExtract}
+            <span className="mt-1 block text-[11px] text-slate-500">
+              From{" "}
+              {detail.wikipediaUrl ? (
+                <a href={detail.wikipediaUrl} target="_blank" rel="noreferrer" className="hover:text-slate-300">
+                  Wikipedia
+                </a>
+              ) : (
+                "Wikipedia"
+              )}{" "}
+              (CC BY-SA)
+            </span>
+          </blockquote>
+        )}
+        {detail && !detail.summary && !detail.wikipediaExtract && !loading && (
           <p className="mb-4 text-sm italic text-slate-500">
             No description available for this node yet.
           </p>
+        )}
+        {detail && detail.aliases.length > 0 && (
+          <p className="mb-3 text-xs text-slate-500">Also known as: {detail.aliases.join(", ")}</p>
         )}
 
         <div className="mb-4 flex flex-wrap gap-2 text-xs">
@@ -210,6 +269,16 @@ export default function DetailPanel({
               zbMATH ↗
             </a>
           )}
+          {detail?.codes?.arxiv && /^[a-z-]+(\.[A-Za-z-]+)?$/.test(detail.codes.arxiv) && (
+            <a
+              href={`https://arxiv.org/list/${detail.codes.arxiv}/recent`}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg bg-slate-700/50 px-2.5 py-1.5 text-slate-200 hover:bg-slate-600/50"
+            >
+              arXiv {detail.codes.arxiv} ↗
+            </a>
+          )}
           {papers?.searchUrl && (
             <a
               href={papers.searchUrl}
@@ -222,8 +291,20 @@ export default function DetailPanel({
           )}
         </div>
 
+        {/* Verified Reference block from the vault (agent-researched, independently verified, cited) */}
+        {detail?.reference && (
+          <details className="mb-4 rounded-xl border border-slate-700/40 bg-slate-800/30 p-3" open={detail.type !== "domain"}>
+            <summary className="cursor-pointer text-xs font-medium uppercase tracking-wide text-slate-400">
+              Reference{detail.verified ? ` · verified ${detail.verified}` : ""}
+            </summary>
+            <div className="mt-2">
+              <Reference markdown={detail.reference} onNavigate={onNavigate} />
+            </div>
+          </details>
+        )}
+
         {/* Live arXiv papers related to this node */}
-        {detail && detail.type !== "branch" && (
+        {detail && detail.type !== "branch" && detail.type !== "domain" && (
           <div className="mb-4">
             <div className="mb-1.5 flex items-baseline justify-between gap-2">
               <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
@@ -352,8 +433,8 @@ export default function DetailPanel({
               </p>
               <div className="flex flex-col gap-1">
                 {items.slice(0, 15).map((c) => (
+                  <div key={`${c.id}|${c.relation}`}>
                   <button
-                    key={c.id}
                     onClick={() => onNavigate(c.id)}
                     className="rounded-lg px-2.5 py-1.5 text-left hover:bg-slate-700/40"
                     title={c.title}
@@ -372,7 +453,29 @@ export default function DetailPanel({
                         {c.note}
                       </span>
                     )}
+                    {c.principle && (
+                      <span
+                        className="mt-0.5 block text-[11px] italic leading-snug text-emerald-300/70"
+                        title={c.principleStatement ?? undefined}
+                      >
+                        Principle: {c.principle}
+                      </span>
+                    )}
+                    {c.flag && (
+                      <span className="mt-0.5 block text-[11px] leading-snug text-slate-600">{c.flag}</span>
+                    )}
                   </button>
+                  {c.sourceUrl && (
+                    <a
+                      href={c.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block px-2.5 pb-1 text-[11px] text-slate-500 hover:text-slate-300"
+                    >
+                      source ↗
+                    </a>
+                  )}
+                  </div>
                 ))}
                 {items.length > 15 && (
                   <p className="px-2.5 text-xs text-slate-500">

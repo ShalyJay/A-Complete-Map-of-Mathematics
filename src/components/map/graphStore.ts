@@ -1,12 +1,15 @@
 import Graph from "graphology";
 import type { GraphNodeLite, GraphPayload } from "@/lib/types";
-import { GRAND_BRANCHES } from "@/lib/branches";
+import { branchShade, domainColor } from "@/lib/branches";
+import { isLeafType } from "@/lib/nodeKinds";
 
 export interface NodeIndex {
   byId: Map<string, GraphNodeLite>;
   children: Map<string, string[]>;
-  /** grand-branch node id for every node (itself for branches) */
+  /** root (domain) node id for every node (itself for roots) */
   branchOf: Map<string, string>;
+  /** top-level branch (depth-1 ancestor) for every node below a root: drives colour */
+  shadeOf: Map<string, string>;
   /** depends-on DAG: node -> its prerequisites (what it builds on) */
   depsOf: Map<string, string[]>;
   /** depends-on DAG: node -> its dependents (what builds on it) */
@@ -15,11 +18,10 @@ export interface NodeIndex {
 }
 
 /**
- * Some grand branches wrap exactly one MSC field (Number Theory -> "Number
- * theory" 11-XX, Discrete Mathematics -> "Combinatorics" 05-XX), which made
- * clicking them feel like a pointless extra hop. Merge that lone field into
- * the branch: its children move up, and the branch carries the MSC code as a
- * sublabel.
+ * A map whose only child is another map (e.g. an MSC field with a single subfield, or a section with
+ * one subsection) is a click with no choice in it. Merge that lone child into its parent: the
+ * child's children move up and the parent carries the child's name/code as a sublabel. Roots are
+ * never merged away.
  */
 export function collapseSingleFieldBranches(payload: GraphPayload): GraphPayload {
   const childrenOf = new Map<string, GraphNodeLite[]>();
@@ -29,44 +31,35 @@ export function collapseSingleFieldBranches(payload: GraphPayload): GraphPayload
     if (!arr) childrenOf.set(n.parentId, (arr = []));
     arr.push(n);
   }
-
-  const removed = new Map<string, string>(); // field id -> branch id
-  const sublabels = new Map<string, string>();
-  for (const branch of payload.nodes) {
-    if (branch.depth !== 0) continue;
-    const kids = childrenOf.get(branch.id) ?? [];
-    if (kids.length !== 1 || kids[0].type !== "field") continue;
-    const field = kids[0];
-    removed.set(field.id, branch.id);
-    const code = field.id.startsWith("msc:") ? field.id.slice(4) : null;
-    const sameName = field.title.trim().toLowerCase() === branch.title.trim().toLowerCase();
-    const parts = [
-      ...(sameName ? [] : [field.title]),
-      ...(code ? [`MSC ${code}`] : []),
-    ];
-    if (parts.length > 0) sublabels.set(branch.id, parts.join(" · "));
+  const byId = new Map(payload.nodes.map((n) => [n.id, n]));
+  const removed = new Map<string, string>(); // lone child id -> the node that absorbs it
+  const absorbed = new Map<string, GraphNodeLite>(); // absorber id -> its (last) absorbed child
+  for (const parent of payload.nodes) {
+    if (isLeafType(parent.type) || parent.depth === 0) continue;
+    const kids = childrenOf.get(parent.id) ?? [];
+    if (kids.length !== 1 || isLeafType(kids[0].type)) continue;
+    removed.set(kids[0].id, parent.id);
   }
   if (removed.size === 0) return payload;
+  // chains (A -> B -> C each single): everything folds into the top survivor
+  const survivor = (id: string): string => (removed.has(id) ? survivor(removed.get(id)!) : id);
+  for (const [child] of removed) absorbed.set(survivor(child), byId.get(child)!);
 
   const nodes: GraphNodeLite[] = [];
   for (const n of payload.nodes) {
     if (removed.has(n.id)) continue;
     let node = n;
-    if (n.parentId && removed.has(n.parentId)) {
-      node = { ...n, parentId: removed.get(n.parentId)! };
-    }
-    if (n.depth === 0) {
-      const fieldId = [...removed.entries()].find(([, b]) => b === n.id)?.[0];
-      const field = fieldId ? payload.nodes.find((x) => x.id === fieldId) : undefined;
-      node = {
-        ...node,
-        childCount: field ? field.childCount : node.childCount,
-        sublabel: sublabels.get(n.id),
-      };
+    if (n.parentId && removed.has(n.parentId)) node = { ...n, parentId: survivor(n.parentId) };
+    const lone = absorbed.get(n.id);
+    if (lone) {
+      const sameName = lone.title.trim().toLowerCase() === n.title.trim().toLowerCase();
+      const parts = [...(sameName ? [] : [lone.title]), ...(lone.sublabel ? [lone.sublabel] : [])];
+      node = { ...node, childCount: lone.childCount, sublabel: parts.join(" · ") || n.sublabel };
     }
     nodes.push(node);
   }
-  const edges = payload.edges.filter((e) => !removed.has(e.source) && !removed.has(e.target));
+  const keep = (id: string) => !removed.has(id);
+  const edges = payload.edges.filter((e) => keep(e.source) && keep(e.target));
   return { nodes, edges };
 }
 
@@ -93,6 +86,16 @@ export function buildIndex(payload: GraphPayload): NodeIndex {
     return result;
   };
   for (const n of payload.nodes) resolveBranch(n.id);
+  const shadeOf = new Map<string, string>();
+  const resolveShade = (id: string): string => {
+    const cached = shadeOf.get(id);
+    if (cached) return cached;
+    const n = byId.get(id);
+    const result = !n || !n.parentId ? id : byId.get(n.parentId)?.parentId ? resolveShade(n.parentId) : id;
+    shadeOf.set(id, result);
+    return result;
+  };
+  for (const n of payload.nodes) resolveShade(n.id);
 
   const depsOf = new Map<string, string[]>();
   const dependentsOf = new Map<string, string[]>();
@@ -117,29 +120,37 @@ export function buildIndex(payload: GraphPayload): NodeIndex {
     return out;
   };
 
-  return { byId, children, branchOf, depsOf, dependentsOf, ancestorsOf };
+  return { byId, children, branchOf, shadeOf, depsOf, dependentsOf, ancestorsOf };
 }
 
 /** Big labeled bubbles for taxonomy levels; small dots for leaf entities. */
 const SIZE_BY_TYPE: Record<string, number> = {
-  branch: 44,
+  domain: 52,
+  branch: 34,
   field: 25,
   subfield: 18,
   topic: 10,
+  concept: 4.5,
   axiom: 7.5,
   conjecture: 4.2,
   theorem: 4,
   definition: 4,
 };
 
-const LABELED_TYPES = ["branch", "field", "subfield"];
+const LABELED_TYPES = ["domain", "branch", "field", "subfield"];
 
 const DIM = "#334155";
 
 export function baseColor(nodeId: string, index: NodeIndex): string {
-  const branchId = index.branchOf.get(nodeId);
-  const branch = GRAND_BRANCHES.find((b) => b.id === branchId);
-  if (!branch) return DIM;
+  const rootId = index.branchOf.get(nodeId);
+  if (!rootId) return DIM;
+  const shadeId = index.shadeOf.get(nodeId) ?? rootId;
+  const branch = {
+    color:
+      shadeId === rootId
+        ? domainColor(rootId)
+        : branchShade(rootId, shadeId, index.children.get(rootId) ?? []),
+  };
   const node = index.byId.get(nodeId);
   // Axioms glow: they are the bright core everything grows from.
   if (node?.type === "axiom") return mixToward(branch.color, "#fef3c7", 0.55);
@@ -196,7 +207,7 @@ export function buildGraph(payload: GraphPayload, index: NodeIndex): Graph {
   // barely visible for the thousands of leaf entities to avoid hairball noise)
   for (const n of payload.nodes) {
     if (n.parentId && graph.hasNode(n.parentId)) {
-      const isLeafEntity = n.depth >= 4;
+      const isLeafEntity = isLeafType(n.type);
       graph.addEdgeWithKey(`t:${n.id}`, n.id, n.parentId, {
         edgeKind: "child-of",
         size: isLeafEntity ? 0.3 : 0.5,
@@ -226,11 +237,13 @@ export function buildGraph(payload: GraphPayload, index: NodeIndex): Graph {
         edgeKind: e.type,
         type: "curved",
         curvature: 0.25,
-        size: 0.5,
+        size: e.type === "bridge" ? 0.9 : 0.5,
         color:
-          e.type === "see-also"
-            ? "rgba(251,191,36,0.18)"
-            : "rgba(148,163,184,0.12)",
+          e.type === "bridge"
+            ? "rgba(52,211,153,0.35)"
+            : e.type === "see-also"
+              ? "rgba(251,191,36,0.18)"
+              : "rgba(148,163,184,0.12)",
         hidden: true,
       });
     }

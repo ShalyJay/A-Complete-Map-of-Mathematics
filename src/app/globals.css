@@ -38,3 +38,14 @@ body {
 .panel-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Verified Reference blocks from the vault (Markdown rendered in the detail panel) */
+.reference h2 { display: none; } /* the block's own "## Reference" heading; the panel has a summary line */
+.reference h3 { margin: 0.9rem 0 0.35rem; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: rgb(148 163 184); }
+.reference p { margin: 0.35rem 0; }
+.reference ul, .reference ol { margin: 0.35rem 0 0.35rem 1.1rem; }
+.reference ul { list-style: disc; }
+.reference ol { list-style: decimal; }
+.reference li { margin: 0.2rem 0; }
+.reference strong { color: rgb(226 232 240); }
+.reference .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.2rem 0; }

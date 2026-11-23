@@ -25,13 +25,14 @@ export interface ArxivSearchResult {
 
 const API = "https://export.arxiv.org/api/query";
 const USER_AGENT =
-  "MathMap/0.1 (personal project; https://github.com/ShalyJay/A-Complete-Map-of-Mathematics)";
+  "MathMap/0.2 (personal project; https://github.com/ShalyJay/A-Complete-Map-of-Mathematics)";
 
 /** In-process cache so reopening a node does not re-hammer arXiv. */
 const cache = new Map<string, { at: number; value: ArxivSearchResult }>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 const ENTITY_TYPES = new Set([
+  "concept",
   "theorem",
   "axiom",
   "conjecture",
@@ -49,20 +50,42 @@ export function cleanSearchTitle(title: string): string {
     .trim();
 }
 
+export interface ArxivScope {
+  domain?: "math" | "physics" | "cs";
+  /** the vault's arXiv category for the node (e.g. "hep-th", "cs.LG"), when it has one */
+  arxiv?: string | null;
+}
+
+const DOMAIN_CATS: Record<string, string> = {
+  math: "(cat:math* OR cat:cs.CC OR cat:cs.LO OR cat:cs.DM OR cat:stat.TH OR cat:stat.ML)",
+  physics:
+    "(cat:physics* OR cat:hep-th OR cat:hep-ph OR cat:hep-ex OR cat:hep-lat OR cat:gr-qc OR cat:quant-ph OR cat:cond-mat* OR cat:astro-ph* OR cat:nucl-th OR cat:nucl-ex OR cat:math-ph OR cat:nlin*)",
+  cs: "(cat:cs* OR cat:stat.ML)",
+};
+
+/** arXiv category filter: the node's own category when the vault records one, else its domain's. */
+export function categoryFilter(scope: ArxivScope = {}): string {
+  const own = (scope.arxiv ?? "")
+    .split(/[,\s]+/)
+    .map((c) => c.trim())
+    .filter((c) => /^[a-z-]+(\.[A-Za-z-]+)?$/.test(c));
+  if (own.length) return `(${own.map((c) => `cat:${c}`).join(" OR ")})`;
+  return DOMAIN_CATS[scope.domain ?? "math"];
+}
+
 /**
  * Build an arXiv search_query for a map node.
- * Entities get a tight phrase match; taxonomy nodes get a broader all: search
- * scoped to math (plus a few CS/stat categories used by the map).
+ * Concepts and named results get a tight phrase match; taxonomy nodes get a broader all: search,
+ * both scoped to the node's arXiv category or its domain's categories.
  */
-export function buildArxivQuery(title: string, type: string): string | null {
+export function buildArxivQuery(title: string, type: string, scope: ArxivScope = {}): string | null {
   const cleaned = cleanSearchTitle(title);
   if (cleaned.length < 3) return null;
-  // Skip ultra-broad grand branches — results would be noise.
-  if (type === "branch") return null;
+  // Skip roots and grand branches — results would be noise.
+  if (type === "branch" || type === "domain") return null;
 
   const phrase = cleaned.replace(/"/g, "");
-  const cats =
-    "(cat:math* OR cat:cs.CC OR cat:cs.LO OR cat:cs.DM OR cat:stat.TH OR cat:stat.ML)";
+  const cats = categoryFilter(scope);
 
   if (ENTITY_TYPES.has(type)) {
     return `(ti:"${phrase}" OR abs:"${phrase}") AND ${cats}`;
@@ -203,9 +226,10 @@ function parseAtom(xml: string, query: string): ArxivSearchResult {
 export async function searchArxiv(opts: {
   title: string;
   type: string;
+  scope?: ArxivScope;
   maxResults?: number;
 }): Promise<ArxivSearchResult | null> {
-  const query = buildArxivQuery(opts.title, opts.type);
+  const query = buildArxivQuery(opts.title, opts.type, opts.scope);
   if (!query) return null;
 
   const maxResults = Math.min(Math.max(opts.maxResults ?? 8, 1), 20);

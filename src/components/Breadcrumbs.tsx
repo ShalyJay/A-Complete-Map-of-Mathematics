@@ -20,7 +20,7 @@ export default function Breadcrumbs({ selectedId, index, onNavigate, onHome }: P
         onClick={onHome}
         className="panel shrink-0 rounded-lg px-3 py-1.5 text-slate-300 hover:text-white"
       >
-        ⌂ Mathematics
+        ⌂ All
       </button>
       {chain.map((id) => {
         const node = index.byId.get(id);

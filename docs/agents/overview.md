@@ -1,28 +1,28 @@
-# Map of Mathematics — Overview (stack, layout, architecture)
+# A Complete Map of Math, Physics & CS — Overview (stack, layout, architecture)
 
-Open when: you need the stack, the folder layout, or how the pieces fit together before a larger change. Moved word for word from `AGENTS.md` on 2026-11-23 to keep that file short; update it here.
+Open when: you need the stack, the folder layout, or how the pieces fit together before a larger change. Rewritten 2026-11-23 when the graph moved to the Personal Wiki vault.
 
 ## Stack
 
 - TypeScript (strict), React 19, Next.js 16 App Router
 - Tailwind CSS v4; CSS vars in `src/app/globals.css`
-- Drizzle ORM + PGlite (`.data/pglite`) or `DATABASE_URL` Postgres
 - Graphology + Sigma.js (2D); three.js + `@react-three/fiber` / `drei` (3D)
-- Fuse.js, Zod, `unpdf`, optional `@anthropic-ai/sdk` / `@xenova/transformers`
-- Ingest via `tsx` scripts; deploy on Vercel (static graph) or Docker
+- Fuse.js, Zod, `unpdf`, `react-markdown` + `remark-math` + `rehype-katex` (Reference blocks), optional `@anthropic-ai/sdk` / `@xenova/transformers`
+- No database: the graph is the vault export in `data/vault/`; deploy on Vercel or Docker
 
-No test framework in `package.json` — only `npm run lint`.
+No test framework; the judges are `validate:graph`, `smoke:layout`, `tsc --noEmit`, `lint` and `build`.
 
 ## Where to look first
 
 | Path | Why |
 |------|-----|
+| `src/lib/vaultGraph.ts` | Vault export → site model: ID scheme, types, depth, edge mapping |
+| `src/lib/staticGraph.ts` | Loads `data/vault/` (mtime reload), `/api/graph` payload, node detail |
 | `src/components/AppShell.tsx` | Client orchestration: fetch graph, expand/select, 2D/3D |
-| `src/lib/graphAccess.ts` | DB vs static-graph backend switch |
-| `src/lib/branches.ts` | `GRAND_BRANCHES` — MSC prefixes and colors |
+| `src/lib/branches.ts` | Domains and colour families |
+| `src/lib/nodeKinds.ts` | Leaf vs map types |
 | `src/lib/localStore.ts` | Mastery / documents in `localStorage` |
-| `src/db/schema.ts` | `nodes` / `edges` schema |
-| `data/static-graph.json` | Committed Vercel/offline graph export |
+| `data/vault/` | Committed vault export (`graph.json`, `references.json`); generated, never hand-edited |
 
 ## Layout
 
@@ -30,25 +30,24 @@ No test framework in `package.json` — only `npm run lint`.
 |------|------|
 | `src/app/` | App Router: `page.tsx` → `AppShell`, API routes |
 | `src/app/api/graph/` | Full lightweight graph payload |
-| `src/app/api/node/[id]/` | Node detail |
-| `src/app/api/analyze/` | Document → MSC classification (no user DB writes) |
+| `src/app/api/node/[id]/` | Node detail (summary, Wikipedia intro, verified Reference, connections) |
+| `src/app/api/analyze/` | Document → taxonomy classification (no server writes) |
 | `src/app/api/arxiv/` | Live arXiv search for a node |
 | `src/components/map/` | `MathMap`, `MathMap3D`, layout, overlays, graphStore |
-| `src/lib/` | Types, branches, static graph, analysis, NLP |
-| `scripts/` | Schema ensure + MSC/Wikidata/Wikipedia/deps ingest + export |
-| `data/cache/` | Gitignored ingest caches |
-| `.data/` | Gitignored PGlite + model cache |
+| `src/lib/` | Types, vault mapping, branches, analysis, NLP |
+| `scripts/` | `sync-vault.ts`, `validate-graph.ts`, `smoke-layout.ts` |
+| `.data/` | Gitignored local NLP model and embedding caches |
 
 ## Architecture
 
-1. Ingest scripts write `nodes` + `edges` into PGlite (or Postgres).
-2. Client `GET /api/graph` → `GraphPayload` → collapse single-field branches → Graphology graph.
-3. Layout is expansion-driven (radial / spherical); overlays from mastery / document heatmap.
-4. Selection → `GET /api/node/[id]`; DetailPanel may call arXiv live.
+1. The vault's `export_site.py` writes `graph.json` + `references.json`; its git hook syncs them into `data/vault/` on GitHub `main`.
+2. `staticGraph.ts` maps them (`vaultGraph.ts`) once per file change; client `GET /api/graph` → collapse single-child maps → Graphology graph.
+3. Layout is expansion-driven (radial / spherical) around three domain roots; overlays from mastery / document heatmap.
+4. Selection → `GET /api/node/[id]`; DetailPanel renders the verified Reference block and may call arXiv live.
 5. Upload → `POST /api/analyze` → client stores results in `localStorage`.
 
-**Backend switch** (`graphAccess.ts`): `DATABASE_URL` → Postgres; else `VERCEL=1` or `USE_STATIC_GRAPH=1` → static JSON; else PGlite (may fall back to static if empty).
+**Node types:** `domain`, `branch`, `field` (MSC field or physics/CS section), `subfield`, `topic` (MSC topic), and leaves `concept | theorem | axiom | conjecture | definition`. Depth is the real tree depth.
 
-**Privacy split:** graph only in DB/static file; mastery/docs keys `mathmap:mastery`, `mathmap:documents` — never server-persisted.
+**Edges:** `depends-on` (vault prereqs; `source` = dependent, `target` = prerequisite), `related` (vault `## Connections` relations, map crosslinks, secondary placements), `see-also` (MSC cross-references), `bridge` (Fable-checked cross-subject links with a principle), `child-of` (from `parentId`, server side only).
 
-**IDs / edges:** prefixes `branch:`, `msc:`, `wd:Q…`, `seed:…`. Map edges: `see-also` | `related` | `depends-on` (`source` = dependent, `target` = prerequisite).
+**Privacy split:** the graph is public and comes only from the vault's allowlisted export; mastery/docs keys `mathmap:mastery`, `mathmap:documents` are never server-persisted.
