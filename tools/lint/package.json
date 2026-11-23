@@ -1,0 +1,10 @@
+{
+  "name": "math-map-lint",
+  "private": true,
+  "description": "ESLint for the app, kept apart from the app's own dependencies. typescript-eslint cannot load TypeScript 7 yet, and Next's build (useTypeScriptCli) needs TypeScript 7 as `typescript`, so the linter gets TypeScript 6 here under that name. Fold this back into the root package.json once typescript-eslint supports TypeScript 7.",
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.4.6",
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
+  }
+}

@@ -226,7 +226,7 @@ export function computeLayout(
           const prev = open[(i - 1 + open.length) % open.length];
           const next = open[(i + 1) % open.length];
           const d = (a: number, b: number) => {
-            let x = Math.abs(a - b) % (2 * Math.PI);
+            const x = Math.abs(a - b) % (2 * Math.PI);
             return x > Math.PI ? 2 * Math.PI - x : x;
           };
           gap = Math.min(d(o.angle, prev.angle), d(o.angle, next.angle));

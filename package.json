@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "[ -d tools/lint/node_modules ] || npm --prefix tools/lint install --silent; tools/lint/node_modules/.bin/eslint --config tools/lint/eslint.config.mjs .",
     "db:push": "drizzle-kit push",
     "db:ensure": "node --import tsx scripts/ensure-schema.ts",
     "db:studio": "drizzle-kit studio",
